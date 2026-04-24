@@ -11,7 +11,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, G } from 'react-native-svg';
 
 import { AppText } from '@/components/AppText';
@@ -121,6 +121,7 @@ function getOverviewTitle(displayName?: string | null): string {
 
 export function HomeScreen() {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
   const dashboard = useDashboard();
@@ -276,7 +277,7 @@ export function HomeScreen() {
   const waterProgress = data.goals.waterTargetMl <= 0 ? 0 : Math.min(1, Math.max(0, data.today.waterMl / data.goals.waterTargetMl));
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: theme.colors.background }]}>
+    <SafeAreaView edges={['left', 'right']} style={[styles.root, { backgroundColor: theme.colors.background }]}>
       <View style={styles.root}>
         <Animated.View pointerEvents="none" style={[styles.heroLayer, heroContainerStyle]}>
           <Animated.View style={[styles.heroBackground, heroBackgroundStyle]}>
@@ -349,7 +350,7 @@ export function HomeScreen() {
             <LinearGradient colors={['rgba(0,0,0,0)', 'rgba(6,11,16,0.84)']} style={styles.heroFadeBottom} />
           </Animated.View>
 
-          <Animated.View style={[styles.heroCopyWrap, heroCopyStyle]}>
+          <Animated.View style={[styles.heroCopyWrap, { top: insets.top + 16 }, heroCopyStyle]}>
             <View style={styles.streakPill}>
               <Flame size={14} color={theme.colors.primary} />
               <AppText style={[styles.streakText, { color: theme.colors.primary }]} weight="700">
@@ -361,7 +362,7 @@ export function HomeScreen() {
             <AppText style={styles.heroSubtitle}>Let&apos;s crush your goals today.</AppText>
           </Animated.View>
 
-          <Animated.View style={[styles.heroExpanded, heroExpandedStyle]}>
+          <Animated.View style={[styles.heroExpanded, { top: insets.top + 124 }, heroExpandedStyle]}>
             <View style={[styles.sideStat, styles.sideStatLeft]}>
               <AppText style={styles.sideLabel}>Consumed</AppText>
               <AppText style={[styles.sideValue, { color: theme.colors.primary }]}>{calories}</AppText>

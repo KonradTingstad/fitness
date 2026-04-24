@@ -1,7 +1,11 @@
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Dumbbell, Home, LineChart, Settings, Soup } from 'lucide-react-native';
+import { StyleSheet, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AuthScreen } from '@/features/auth/screens/AuthScreen';
 import { OnboardingScreen } from '@/features/auth/screens/OnboardingScreen';
@@ -27,25 +31,68 @@ const Tabs = createBottomTabNavigator<BottomTabParamList>();
 
 function MainTabs() {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  const floatingBottom = Math.max(insets.bottom - 4, 12);
+  const tabBarHorizontalInset = screenWidth < 360 ? 14 : 18;
+
   return (
     <Tabs.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: theme.colors.muted,
+        tabBarBackground: () => (
+          <>
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']}
+              locations={[0, 0.36, 1]}
+              style={[
+                styles.tabBarVeil,
+                {
+                  left: -tabBarHorizontalInset,
+                  right: -tabBarHorizontalInset,
+                  bottom: -floatingBottom - 4,
+                },
+              ]}
+            />
+            <BlurView pointerEvents="none" intensity={48} tint="dark" style={styles.tabBarGlass}>
+              <LinearGradient
+                colors={['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']}
+                locations={[0, 0.45, 1]}
+                style={StyleSheet.absoluteFill}
+              />
+            </BlurView>
+          </>
+        ),
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
-          height: 78,
-          paddingBottom: 18,
-          paddingTop: 8,
+          backgroundColor: 'transparent',
+          borderColor: 'transparent',
+          borderTopWidth: 0,
+          borderWidth: 0,
+          borderRadius: 18,
+          height: 62,
+          paddingBottom: 6,
+          paddingTop: 6,
+          marginHorizontal: tabBarHorizontalInset,
+          position: 'absolute',
+          bottom: floatingBottom,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+        },
+        tabBarItemStyle: {
+          paddingVertical: 0,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: '700',
         },
         tabBarIcon: ({ color, size }) => {
-          const iconSize = size - 1;
+          const iconSize = Math.min(size - 3, 22);
           if (route.name === 'Home') return <Home size={iconSize} color={color} />;
           if (route.name === 'Workouts') return <Dumbbell size={iconSize} color={color} />;
           if (route.name === 'Nutrition') return <Soup size={iconSize} color={color} />;
@@ -62,6 +109,21 @@ function MainTabs() {
     </Tabs.Navigator>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBarVeil: {
+    position: 'absolute',
+    top: 0,
+  },
+  tabBarGlass: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(17,20,24,0.38)',
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+});
 
 export function RootNavigator() {
   const theme = useAppTheme();

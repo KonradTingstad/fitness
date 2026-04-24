@@ -37,6 +37,17 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
 - Prioritet: Medium
 - Notater: Kan kombineres med generell opprydding av navigasjon i appen.
 
+### 4) Fikse ODA API for mat
+
+- Status: [ ] Ikke startet
+- Beskrivelse: Integrere og stabilisere ODA API for matdata i appen.
+- Eksempler:
+  - Hente produkter og naeringsinnhold fra ODA.
+  - Forbedre treff og filtrering i matsok.
+  - Sikre robust handtering av feil og manglende data.
+- Prioritet: Hoy
+- Notater: Viktig for mer presis logging av mat i hverdagsbruk.
+
 ## Mal for nye forslag
 
 ### X) Tittel pa funksjon

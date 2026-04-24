@@ -77,8 +77,10 @@ Ved appstart (`App.tsx`) skjer dette:
 ### 2) Home
 
 - Daglig dashboard med:
-  - kalorier konsumert vs target
-  - macros (protein/carbs/fat) med progressbars
+  - scroll-responsiv hero-header for kalorier (ikke card)
+  - kollaps/parallax/fade-animasjon ved scroll
+  - kompakt toppstatus i kollapset state (`consumed / target kcal`)
+  - makroindikatorer (protein/carbs/fat) plassert i scroll-innholdet under hero, slik at de scroller sammen med resten av modulene
   - "Today plan" (start workout / view workout / view summary)
   - hydration med "Add 250 ml"
 - Quick actions:
@@ -148,11 +150,18 @@ Exercise history (`ExerciseHistoryScreen`):
 
 `ProgressScreen` viser:
 
-- ukentlig treningsvolum (bar chart)
-- kalorier (bar chart)
-- kroppsvekt-trend (line chart)
-- muskelgrupper-fordeling
-- protein-snitt vs protein-mal
+- header + tidsfilter (`7D`, `30D`, `90D`, `1Y`, `All`)
+- `Overview`-seksjon med 4 moduler som kan tilpasses av bruker via `Edit`
+  - bruker kan legge til/fjerne stats (maks 4 aktive)
+  - valg lagres per bruker i `progress_overview_modules`
+- `Custom stats`-seksjon med datadrevne widget-kort
+  - widgets hentes fra `progress_widgets`
+  - hver widget kan redigeres/slettes
+  - støtter body/nutrition/training/exercise-metrikker
+- flyt for nye statistikker:
+  - `+` -> `Add statistic` bottom sheet (kategori)
+  - `Select statistic` skjerm
+  - `Configure statistic` skjerm med preview + save
 
 ### 6) Profile
 
@@ -352,6 +361,7 @@ Disse dekker blant annet:
 - Programredigering og template-creator i workout er forelopig knyttet til placeholders.
 - Export/Delete data i profile er placeholders for neste backend-slice.
 - Ingen omfattende repository-integrasjonstester enda (kun utvalgte domain-kalkulasjonstester).
+- Drag & drop-rekkefolge for progress-widgets/overview-moduler er ikke implementert enda.
 
 Ekstra ideer finnes i: `To be added.md`.
 
@@ -359,4 +369,9 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-24: Oppdatert app-ikon til nytt FormFuel-ikon (assets: `icon.png`, `adaptive-icon.png`, `favicon.png`) basert pa levert designfil.
+- 2026-04-24: Home hero er finjustert mot målbildet (bedre typografi/proposjoner i ring/seksjoner, topprad/streak/greeting), og macro-boksene er flyttet til scroll-innhold slik at de følger nedover med de andre kortene.
+- 2026-04-24: Home er redesignet med animert hero-header for kalorier (gradientbakgrunn, progresjonsring, makro-pills, parallax/kollaps/fade) og kompakt collapsed-state ved scroll.
+- 2026-04-24: Progress `Overview` er gjort bruker-tilpassbar (legg til/fjern stats), med ny `Edit overview` bottom sheet og persistering i `progress_overview_modules`.
+- 2026-04-24: Progress er refaktorert til datadrevet widget-dashboard med `Add statistic`-flyt (kategori -> velg metrikk -> konfigurer -> lagre), nye progress-komponenter og persistens i `progress_widgets`.
 - 2026-04-24: Opprettet full `README.md` med komplett appoversikt, funksjonsstatus, arkitektur, setup, sync-beskrivelse, teststatus og vedlikeholdsregel for videre oppdateringer.

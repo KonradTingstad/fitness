@@ -19,6 +19,7 @@ import {
 import { ComponentType, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import Svg, { Circle, G } from 'react-native-svg';
 
 import { AppText } from '@/components/AppText';
 import { Button } from '@/components/Button';
@@ -107,6 +108,214 @@ function strategyCopy(goal: GoalSettings['goal']): string {
   if (goal === 'gain') return 'Lean-bulk setup focused on performance and recovery.';
   if (goal === 'maintain') return 'Balanced maintenance with steady energy and macro intake.';
   return 'Custom nutrition strategy adapted to your daily targets.';
+}
+
+function clampedProgress(value: number, max: number): number {
+  if (max <= 0) return 0;
+  return Math.max(0, Math.min(1, value / max));
+}
+
+function progressPercent(progress: number): number {
+  return Math.round(Math.max(0, Math.min(1, progress)) * 100);
+}
+
+function remainingCalorieLabel(value: number): string {
+  if (value >= 0) return `${value} kcal left`;
+  return `${Math.abs(value)} kcal over`;
+}
+
+function mealItemLabel(count: number): string {
+  return `${count} item${count === 1 ? '' : 's'}`;
+}
+
+function CalorieProgressArc({ progress }: { progress: number }) {
+  const theme = useAppTheme();
+  const size = 104;
+  const strokeWidth = 10;
+  const center = size / 2;
+  const radius = center - strokeWidth / 2;
+  const circumference = 2 * Math.PI * radius;
+  const arcCoverage = 0.78;
+  const arcLength = circumference * arcCoverage;
+  const normalized = Math.max(0, Math.min(1, progress));
+  const percent = progressPercent(normalized);
+
+  return (
+    <View style={styles.calorieArcWrap}>
+      <Svg width={size} height={size}>
+        <G rotation={130} origin={`${center},${center}`}>
+          <Circle
+            cx={center}
+            cy={center}
+            fill="none"
+            r={radius}
+            stroke={theme.colors.surfaceAlt}
+            strokeDasharray={`${arcLength} ${circumference}`}
+            strokeLinecap="round"
+            strokeWidth={strokeWidth}
+          />
+          <Circle
+            cx={center}
+            cy={center}
+            fill="none"
+            r={radius}
+            stroke={theme.colors.primary}
+            strokeDasharray={`${arcLength} ${circumference}`}
+            strokeDashoffset={arcLength * (1 - normalized)}
+            strokeLinecap="round"
+            strokeOpacity={0.26}
+            strokeWidth={strokeWidth + 4}
+          />
+          <Circle
+            cx={center}
+            cy={center}
+            fill="none"
+            r={radius}
+            stroke={theme.colors.primary}
+            strokeDasharray={`${arcLength} ${circumference}`}
+            strokeDashoffset={arcLength * (1 - normalized)}
+            strokeLinecap="round"
+            strokeWidth={strokeWidth}
+          />
+        </G>
+      </Svg>
+      <View style={styles.calorieArcCenter}>
+        <AppText weight="800" style={{ color: theme.colors.primary }}>
+          {percent}%
+        </AppText>
+      </View>
+    </View>
+  );
+}
+
+function MacroProgressItem({ label, value, goal, color }: { label: string; value: number; goal: number; color: string }) {
+  const theme = useAppTheme();
+  const progress = clampedProgress(value, goal);
+
+  return (
+    <View style={styles.macroDashboardItem}>
+      <View style={styles.macroDashboardHeader}>
+        <AppText weight="800" variant="small">
+          {label}
+        </AppText>
+        <AppText weight="800" style={{ color }}>
+          {value}g
+        </AppText>
+      </View>
+      <AppText muted variant="small">
+        of {goal}g
+      </AppText>
+      <View style={[styles.thinProgressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
+        <View style={[styles.thinProgressFill, { backgroundColor: color, width: `${progress * 100}%` }]} />
+      </View>
+    </View>
+  );
+}
+
+function CaloriesDashboardCard({
+  calories,
+  target,
+  remaining,
+  progress,
+  protein,
+  carbs,
+  fat,
+  goals,
+}: {
+  calories: number;
+  target: number;
+  remaining: number;
+  progress: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  goals: GoalSettings;
+}) {
+  const theme = useAppTheme();
+
+  return (
+    <Card style={styles.caloriesDashboardCard}>
+      <View style={styles.caloriesDashboardTop}>
+        <View style={styles.calorieMetricBlock}>
+          <AppText variant="section">Calories</AppText>
+          <AppText style={[styles.calorieDashboardMetric, { color: theme.colors.primary }]}>{calories}</AppText>
+          <AppText muted style={styles.calorieGoalText}>
+            of {target} kcal
+          </AppText>
+          <AppText weight="700" style={[styles.calorieLeftText, { color: remaining >= 0 ? theme.colors.primary : theme.colors.warning }]}>
+            {remainingCalorieLabel(remaining)}
+          </AppText>
+        </View>
+        <CalorieProgressArc progress={progress} />
+      </View>
+
+      <View style={styles.macroDashboardRow}>
+        <MacroProgressItem label="Protein" value={protein} goal={goals.proteinTargetG} color={theme.colors.primary} />
+        <MacroProgressItem label="Carbs" value={carbs} goal={goals.carbTargetG} color={theme.colors.info} />
+        <MacroProgressItem label="Fat" value={fat} goal={goals.fatTargetG} color={theme.colors.warning} />
+      </View>
+    </Card>
+  );
+}
+
+function MealSummaryCard({
+  label,
+  calories,
+  count,
+  calorieTarget,
+  icon: Icon,
+  color,
+  tint,
+  onPress,
+}: {
+  label: string;
+  calories: number;
+  count: number;
+  calorieTarget: number;
+  icon: ComponentType<LucideProps>;
+  color: string;
+  tint: string;
+  onPress: () => void;
+}) {
+  const theme = useAppTheme();
+  const progress = clampedProgress(calories, calorieTarget);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.mealSummaryCard,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+          opacity: pressed ? 0.92 : 1,
+          transform: [{ scale: pressed ? 0.985 : 1 }],
+        },
+      ]}
+    >
+      <View style={[styles.mealSummaryIcon, { backgroundColor: tint, borderColor: color }]}>
+        <Icon size={22} color={color} strokeWidth={2.4} />
+      </View>
+      <View style={styles.mealSummaryCopy}>
+        <AppText weight="800" style={styles.mealSummaryTitle}>
+          {label}
+        </AppText>
+        <AppText muted>
+          {calories} kcal • {mealItemLabel(count)}
+        </AppText>
+      </View>
+      <View style={styles.mealProgressWrap}>
+        <AppText weight="800" style={{ color: progress > 0 ? theme.colors.primary : theme.colors.muted }}>
+          {progressPercent(progress)}%
+        </AppText>
+        <View style={[styles.mealProgressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
+          <View style={[styles.mealProgressFill, { backgroundColor: theme.colors.primary, width: `${progress * 100}%` }]} />
+        </View>
+      </View>
+      <ChevronRight size={20} color={theme.colors.muted} />
+    </Pressable>
+  );
 }
 
 export function NutritionDiaryScreen() {
@@ -300,86 +509,38 @@ export function NutritionDiaryScreen() {
   );
 
   const renderDiaryTab = () => (
-    <>
-      <Card style={styles.summaryCard}>
-        <View style={styles.summaryTopRow}>
-          <View>
-            <AppText variant="section">Calories</AppText>
-            <AppText style={[styles.calorieMetric, { color: theme.colors.primary }]}>{calories}</AppText>
-            <AppText muted style={styles.summarySmallText}>
-              of {calorieTarget} kcal
-            </AppText>
-          </View>
-          <View style={styles.remainingWrap}>
-            <Target size={21} color={theme.colors.muted} />
-            <AppText style={styles.remainingValue} muted>
-              {remainingCalories} kcal
-            </AppText>
-            <AppText muted style={styles.summarySmallText}>
-              remaining
-            </AppText>
-          </View>
-        </View>
+    <View style={styles.diaryFlow}>
+      <CaloriesDashboardCard
+        calories={calories}
+        target={calorieTarget}
+        remaining={remainingCalories}
+        progress={calorieProgress}
+        protein={protein}
+        carbs={carbs}
+        fat={fat}
+        goals={goals}
+      />
 
-        <View style={[styles.progressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
-          <View style={[styles.progressFill, { backgroundColor: theme.colors.primary, width: `${calorieProgress * 100}%` }]} />
-        </View>
-
-        <View style={styles.macroRow}>
-          <View style={styles.macroCell}>
-            <AppText muted>Protein</AppText>
-            <AppText weight="800" style={{ color: theme.colors.primary }}>
-              {protein} g
-            </AppText>
-          </View>
-          <View style={[styles.macroDivider, { backgroundColor: theme.colors.border }]} />
-          <View style={styles.macroCell}>
-            <AppText muted>Carbs</AppText>
-            <AppText weight="800" style={{ color: theme.colors.primary }}>
-              {carbs} g
-            </AppText>
-          </View>
-          <View style={[styles.macroDivider, { backgroundColor: theme.colors.border }]} />
-          <View style={styles.macroCell}>
-            <AppText muted>Fat</AppText>
-            <AppText weight="800" style={{ color: theme.colors.warning }}>
-              {fat} g
-            </AppText>
-          </View>
-        </View>
-      </Card>
-
-      <Card style={styles.mealCard}>
-        {mealSections.map((section, index) => {
-          const Icon = section.icon;
-          return (
-            <Pressable
-              key={section.slot}
-              onPress={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate })}
-              style={({ pressed }) => [
-                styles.mealRow,
-                index !== mealSections.length - 1 && { borderBottomColor: theme.colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
-                { opacity: pressed ? 0.84 : 1 },
-              ]}
-            >
-              <View style={[styles.mealIconWrap, { backgroundColor: section.tint }]}>
-                <Icon size={17} color={section.color} />
-              </View>
-              <View style={styles.mealCopy}>
-                <AppText weight="800">{section.label}</AppText>
-                <AppText muted>
-                  {section.calories} kcal{section.count ? ` • ${section.count} item${section.count > 1 ? 's' : ''}` : ''}
-                </AppText>
-              </View>
-              <ChevronRight size={20} color={theme.colors.muted} />
-            </Pressable>
-          );
-        })}
-      </Card>
+      <View style={styles.mealCardsStack}>
+        {mealSections.map((section) => (
+          <MealSummaryCard
+            key={section.slot}
+            label={section.label}
+            calories={section.calories}
+            count={section.count}
+            calorieTarget={calorieTarget}
+            icon={section.icon}
+            color={section.color}
+            tint={section.tint}
+            onPress={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate })}
+          />
+        ))}
+      </View>
 
       <Button label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate })} style={styles.primaryCta} />
 
       <Pressable
+        accessibilityRole="button"
         onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate })}
         style={({ pressed }) => [
           styles.secondaryQuickAction,
@@ -387,12 +548,17 @@ export function NutritionDiaryScreen() {
         ]}
       >
         <View style={styles.quickActionCopy}>
-          <Barcode size={20} color={theme.colors.primary} />
-          <AppText muted>Quick add with barcode scanner</AppText>
+          <View style={[styles.barcodeIconWrap, { backgroundColor: theme.colors.surfaceAlt }]}>
+            <Barcode size={20} color={theme.colors.primary} />
+          </View>
+          <View>
+            <AppText weight="800">Barcode scanner</AppText>
+            <AppText muted>Quick add packaged food</AppText>
+          </View>
         </View>
         <ChevronRight size={20} color={theme.colors.muted} />
       </Pressable>
-    </>
+    </View>
   );
 
   const renderSearchTab = () => (
@@ -828,30 +994,125 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 48,
   },
-  summaryCard: {
-    gap: 10,
+  diaryFlow: {
+    gap: 14,
   },
-  summaryTopRow: {
+  caloriesDashboardCard: {
+    gap: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+  },
+  caloriesDashboardTop: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: 16,
     justifyContent: 'space-between',
   },
-  calorieMetric: {
-    fontSize: 40,
+  calorieMetricBlock: {
+    flex: 1,
+    gap: 4,
+    minWidth: 0,
+  },
+  calorieDashboardMetric: {
+    fontSize: 46,
     fontWeight: '800',
-    lineHeight: 44,
+    lineHeight: 50,
   },
-  summarySmallText: {
-    fontSize: 13,
+  calorieGoalText: {
+    fontSize: 14,
+    lineHeight: 18,
   },
-  remainingWrap: {
-    alignItems: 'flex-end',
+  calorieLeftText: {
+    marginTop: 8,
+  },
+  calorieArcWrap: {
+    alignItems: 'center',
+    height: 104,
+    justifyContent: 'center',
+    width: 104,
+  },
+  calorieArcCenter: {
+    alignItems: 'center',
+    height: '100%',
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    top: 0,
+    width: '100%',
+  },
+  macroDashboardRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  macroDashboardItem: {
+    flex: 1,
+    gap: 5,
+    minWidth: 0,
+  },
+  macroDashboardHeader: {
     gap: 2,
   },
-  remainingValue: {
-    fontSize: 28,
-    fontWeight: '700',
-    lineHeight: 32,
+  thinProgressTrack: {
+    borderRadius: 999,
+    height: 5,
+    overflow: 'hidden',
+  },
+  thinProgressFill: {
+    borderRadius: 999,
+    height: '100%',
+  },
+  mealCardsStack: {
+    gap: 14,
+    marginTop: 8,
+  },
+  mealSummaryCard: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 86,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+  },
+  mealSummaryIcon: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  mealSummaryCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  mealSummaryTitle: {
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  mealProgressWrap: {
+    alignItems: 'flex-end',
+    gap: 7,
+    width: 70,
+  },
+  mealProgressTrack: {
+    borderRadius: 999,
+    height: 7,
+    overflow: 'hidden',
+    width: 62,
+  },
+  mealProgressFill: {
+    borderRadius: 999,
+    height: '100%',
   },
   progressTrack: {
     borderRadius: 8,
@@ -862,44 +1123,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     height: '100%',
   },
-  macroRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  macroCell: {
-    flex: 1,
-    gap: 2,
-    paddingVertical: 6,
-  },
-  macroDivider: {
-    height: 40,
-    width: StyleSheet.hairlineWidth,
-  },
-  mealCard: {
-    gap: 0,
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-  },
-  mealRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  mealIconWrap: {
-    alignItems: 'center',
-    borderRadius: 17,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
-  mealCopy: {
-    flex: 1,
-    gap: 1,
-  },
   primaryCta: {
-    minHeight: 52,
+    minHeight: 56,
   },
   secondaryQuickAction: {
     alignItems: 'center',
@@ -907,13 +1132,20 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    minHeight: 52,
-    paddingHorizontal: 12,
+    minHeight: 64,
+    paddingHorizontal: 14,
   },
   quickActionCopy: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
+  },
+  barcodeIconWrap: {
+    alignItems: 'center',
+    borderRadius: 8,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
   },
   searchRow: {
     flexDirection: 'row',

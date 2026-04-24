@@ -91,10 +91,31 @@ Ved appstart (`App.tsx`) skjer dette:
 
 `WorkoutDashboardScreen` har 4 faner:
 
-- `Today`: aktiv okt, forslag til neste okt, ukesstatus, lagrede rutiner
-- `Program`: ukesplan + rutiner (UI hooks for redigering)
-- `History`: fullforte okter med sammendrag
+- `Today`: dagens planlagte okt/forslag, rest day-state, ukesstatus, streak og progress overview
+- `Program`: ukesplan + grupperte templates i 2-kolonne grid
+- `History`: ukesoppsummering, kalender og fullforte okter med sammendrag
 - `Exercises`: sok/filter, PR/last set-data, inngang til historikk
+
+Program-fanen:
+
+- viser `My groups` med lokale workout-grupper
+- grupper kan foldes inn/ut og persisteres lokalt i AsyncStorage
+- templates vises som kompakte kort i 2-kolonne grid
+- hver gruppe har handlinger for rename, reorder, duplicate og delete
+
+History-fanen:
+
+- manedskalender markerer kun workout-dager med tynn gronn outline rundt datoen
+- rest-dager og rest-legends vises ikke i manedsvisning
+- workout-datoer kan trykkes for a apne `WorkoutSummary`
+- `Month` kan ikke navigere fremover forbi navaerende maned
+- kalenderen har `Month`, `Year` og `Multi-year` visning
+- kalenderkortet holder fast hoyde nar man bytter mellom visningene
+- `Year` og `Multi-year` ankrer seg til nyeste tilgjengelige periode uavhengig av valgt maned i `Month`
+- `Year` viser mini-heatmaps i fast 3-kolonne grid, med eldre maneder oppover og nyeste manedsrekke nederst
+- `Year` viser ikke rader etter raden som inneholder valgt/navaerende maned
+- `Multi-year` viser kompakt aktivitetsoversikt i en intern scroll-liste med eldre ar oppover, nyeste ar nederst og manedsforkortelser
+- kalenderbytte beholder forrige data mens neste periode hentes, og prefetcher naboperioder for a unnga venteskjerm
 
 Live logging (`LiveWorkoutScreen`):
 
@@ -123,10 +144,16 @@ Exercise history (`ExerciseHistoryScreen`):
 
 `NutritionDiaryScreen` har 4 faner:
 
-- `Diary`: kalorier/macros, maltidsseksjoner, log meal, barcode-ingang
+- `Diary`: dashboard-kort for kalorier/macros, separate maltidskort, log meal og barcode-ingang
 - `Search`: sok/filter/chips, quick-add, recent searches
 - `Meals`: saved meals + favoritter
 - `Goals`: target-kort og progresjon pa kalorier/macros/vann
+
+Diary-fanen:
+
+- kalorimodulen er et dashboard-kort med stort kcal-tall, resterende kcal, arc-progress og macro-rad
+- `Breakfast`, `Lunch`, `Dinner` og `Snacks` vises som separate kort med ikon, kcal/items, prosent og tynn progress bar
+- `Log meal` er primar fullbredde-CTA, fulgt av egen barcode scanner-rad
 
 `FoodSearchScreen`:
 
@@ -226,6 +253,12 @@ Hvis Supabase ikke er konfigurert, fortsetter appen i lokal modus uten datatap l
 - `selectedMealSlot`
 - `pendingSyncCount`
 
+### Felles UI-shell
+
+- `src/components/Screen.tsx` er standard wrapper for vanlige skjermer.
+- `src/components/AppBackground.tsx` legger en felles gronn toppfade bak skjerminnholdet.
+- Home har fortsatt en egen mer avansert hero-bakgrunn fordi den er en spesiallayout.
+
 ### Domain-lag
 
 - Modeller: `src/domain/models.ts`
@@ -317,6 +350,14 @@ npm run android
 npm run web
 ```
 
+For iOS-simulator i denne appen bor native development build brukes:
+
+```bash
+npm run ios
+```
+
+`npm run start` starter Metro, men skal ikke brukes som Expo Go-flyt nar native moduler eller development build oppforsel skal verifiseres.
+
 ### Ny iOS native project (ved behov)
 
 ```bash
@@ -359,6 +400,7 @@ Disse dekker blant annet:
 
 - Barcode scanner er arkitekturmessig pa plass, men faktisk provider-oppslag er ikke konfigurert.
 - Programredigering og template-creator i workout er forelopig knyttet til placeholders.
+- History `Year` og `Multi-year` er forelopig oversiktsvisninger uten direkte drilldown per dag.
 - Export/Delete data i profile er placeholders for neste backend-slice.
 - Ingen omfattende repository-integrasjonstester enda (kun utvalgte domain-kalkulasjonstester).
 - Drag & drop-rekkefolge for progress-widgets/overview-moduler er ikke implementert enda.
@@ -369,6 +411,8 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-24: Workouts er oppdatert med ny Today-layout/streak-logikk, grupperte Program-templates i 2-kolonne grid, fast hoyde pa History-kalenderen med Month/Year/Multi-year, intern scroll for Year/Multi-year, Year-grid med 3 kolonner og nyeste rekke nederst, Month-sperre mot fremtid, separat nyeste-anker for Year/Multi-year, manedslabels i Multi-year, cache/prefetch for kalenderbytte og felles gronn toppfade via `AppBackground`.
+- 2026-04-24: Nutrition `Diary` er redesignet som en mer dynamisk dashboard-layout med kalorikort, arc-progress, macro-progress og separate maltidskort i Workouts-stil.
 - 2026-04-24: Oppdatert app-ikon til nytt FormFuel-ikon (assets: `icon.png`, `adaptive-icon.png`, `favicon.png`) basert pa levert designfil.
 - 2026-04-24: Home hero er finjustert mot målbildet (bedre typografi/proposjoner i ring/seksjoner, topprad/streak/greeting), og macro-boksene er flyttet til scroll-innhold slik at de følger nedover med de andre kortene.
 - 2026-04-24: Home er redesignet med animert hero-header for kalorier (gradientbakgrunn, progresjonsring, makro-pills, parallax/kollaps/fade) og kompakt collapsed-state ved scroll.

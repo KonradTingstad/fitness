@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { getBodyWeightTrend, getDashboardSummary } from '@/data/repositories/dashboardRepository';
 import { getDiary, getNutritionTotalsForDates, getRecentFoods, getRecipes, getSavedMeals, searchFoodItems } from '@/data/repositories/nutritionRepository';
@@ -55,6 +55,9 @@ export function useWorkoutSessionsForRange(startLocalDate: string, endLocalDate:
   return useQuery({
     queryKey: queryKeys.workoutSessionsForRange(startLocalDate, endLocalDate),
     queryFn: () => listWorkoutSessionsForRange(startLocalDate, endLocalDate),
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   });
 }
 

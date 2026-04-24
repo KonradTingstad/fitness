@@ -15,18 +15,7 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
 - Prioritet: Medium
 - Notater: Kan senere utvides med grupper, chat og delte mal.
 
-### 2) Flytende meny nederst
-
-- Status: [ ] Ikke startet
-- Beskrivelse: Justere bunnmenyen slik at den far et tydelig "flytende" uttrykk og oppleves mer moderne.
-- Eksempler:
-  - Legge til luft rundt menyen mot skjermkantene.
-  - Bruke avrundede hjorner og diskret skygge.
-  - Sikre at menyen fungerer godt pa bade mobil og storre skjermer.
-- Prioritet: Hoy
-- Notater: Borde forbedre bade utseende og brukervennlighet.
-
-### 3) Forbedre profilmenyen
+### 2) Forbedre profilmenyen
 
 - Status: [ ] Ikke startet
 - Beskrivelse: Rydde opp i profilmenyen slik at den blir enklere a forsta og raskere a bruke.
@@ -37,7 +26,7 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
 - Prioritet: Medium
 - Notater: Kan kombineres med generell opprydding av navigasjon i appen.
 
-### 4) Fikse ODA API for mat
+### 3) Fikse ODA API for mat
 
 - Status: [ ] Ikke startet
 - Beskrivelse: Integrere og stabilisere ODA API for matdata i appen.
@@ -47,6 +36,17 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
   - Sikre robust handtering av feil og manglende data.
 - Prioritet: Hoy
 - Notater: Viktig for mer presis logging av mat i hverdagsbruk.
+
+### 4) Lagre og dele maltider
+
+- Status: [ ] Ikke startet
+- Beskrivelse: Gi brukere mulighet til a lagre egne maltider i appen og dele dem med venner.
+- Eksempler:
+  - Lagre favorittmaltider for rask gjenbruk.
+  - Dele et maltid direkte med venner i appen.
+  - Importere eller kopiere maltider man far delt.
+- Prioritet: Medium
+- Notater: Kan kobles tett mot sosiale funksjoner og felles planlegging.
 
 ## Mal for nye forslag
 

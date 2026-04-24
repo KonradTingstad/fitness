@@ -90,6 +90,7 @@ export function LiveWorkoutScreen() {
     mutationFn: () => finishWorkout(route.params.sessionId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
       queryClient.invalidateQueries({ queryKey: queryKeys.progress });
       navigation.replace('WorkoutSummary', { sessionId: route.params.sessionId });
     },
@@ -99,6 +100,7 @@ export function LiveWorkoutScreen() {
     mutationFn: () => discardWorkout(route.params.sessionId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
       navigation.goBack();
     },
   });

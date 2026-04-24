@@ -16,6 +16,8 @@ import {
   getRecentWorkouts,
   getWorkoutProgress,
   getWorkoutSession,
+  listWorkoutPlansForRange,
+  listWorkoutSessionsForRange,
   listExercises,
   listRoutines,
 } from '@/data/repositories/workoutRepository';
@@ -40,6 +42,20 @@ export function useWorkoutSession(id: string) {
 
 export function useRecentWorkouts() {
   return useQuery({ queryKey: queryKeys.recentWorkouts, queryFn: () => getRecentWorkouts() });
+}
+
+export function useWorkoutPlansForRange(startLocalDate: string, endLocalDate: string) {
+  return useQuery({
+    queryKey: queryKeys.workoutPlans(startLocalDate, endLocalDate),
+    queryFn: () => listWorkoutPlansForRange(startLocalDate, endLocalDate),
+  });
+}
+
+export function useWorkoutSessionsForRange(startLocalDate: string, endLocalDate: string) {
+  return useQuery({
+    queryKey: queryKeys.workoutSessionsForRange(startLocalDate, endLocalDate),
+    queryFn: () => listWorkoutSessionsForRange(startLocalDate, endLocalDate),
+  });
 }
 
 export function useDiary(localDate = toLocalDateKey()) {

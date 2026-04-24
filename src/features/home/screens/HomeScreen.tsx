@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Clock, Droplets, Dumbbell, Flame, Utensils, Wheat } from 'lucide-react-native';
+import { Clock, Droplets, Dumbbell, Utensils, Wheat } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Animated, {
@@ -198,11 +198,6 @@ export function HomeScreen() {
     ],
   }));
 
-  const compactStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [70, 170], [0, 1], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(scrollY.value, [70, 170], [10, 0], Extrapolation.CLAMP) }],
-  }));
-
   if (dashboard.isLoading || !dashboard.data) {
     return <LoadingState label="Building dashboard" />;
   }
@@ -282,7 +277,7 @@ export function HomeScreen() {
         <Animated.View pointerEvents="none" style={[styles.heroLayer, heroContainerStyle]}>
           <Animated.View style={[styles.heroBackground, heroBackgroundStyle]}>
             <LinearGradient
-              colors={['#1ED760', '#0F3D2E', '#020617']}
+              colors={['#1ED760', '#0F3D2E', theme.colors.background]}
               end={{ x: 0.5, y: 1 }}
               start={{ x: 0.5, y: 0 }}
               style={StyleSheet.absoluteFill}
@@ -347,22 +342,19 @@ export function HomeScreen() {
                 />
               ))}
             </Animated.View>
-            <LinearGradient colors={['rgba(0,0,0,0)', 'rgba(6,11,16,0.84)']} style={styles.heroFadeBottom} />
+            <LinearGradient
+              colors={['rgba(17,20,24,0)', 'rgba(17,20,24,0.46)', theme.colors.background]}
+              locations={[0, 0.58, 1]}
+              style={styles.heroFadeBottom}
+            />
           </Animated.View>
 
-          <Animated.View style={[styles.heroCopyWrap, { top: insets.top + 16 }, heroCopyStyle]}>
-            <View style={styles.streakPill}>
-              <Flame size={14} color={theme.colors.primary} />
-              <AppText style={[styles.streakText, { color: theme.colors.primary }]} weight="700">
-                2 day streak
-              </AppText>
-            </View>
-
+          <Animated.View style={[styles.heroCopyWrap, { top: insets.top + 36 }, heroCopyStyle]}>
             <AppText style={styles.heroTitle}>{headerTitle}</AppText>
             <AppText style={styles.heroSubtitle}>Let&apos;s crush your goals today.</AppText>
           </Animated.View>
 
-          <Animated.View style={[styles.heroExpanded, { top: insets.top + 124 }, heroExpandedStyle]}>
+          <Animated.View style={[styles.heroExpanded, { top: insets.top + 102 }, heroExpandedStyle]}>
             <View style={[styles.sideStat, styles.sideStatLeft]}>
               <AppText style={styles.sideLabel}>Consumed</AppText>
               <AppText style={[styles.sideValue, { color: theme.colors.primary }]}>{calories}</AppText>
@@ -386,13 +378,6 @@ export function HomeScreen() {
               <AppText style={styles.sideLabel}>Target</AppText>
               <AppText style={styles.sideValue}>{targetCalories}</AppText>
               <AppText style={styles.sideUnit}>kcal</AppText>
-            </View>
-          </Animated.View>
-
-          <Animated.View style={[styles.compactBanner, compactStyle]}>
-            <AppText style={styles.compactText}>{calories} / {targetCalories} kcal</AppText>
-            <View style={styles.compactTrack}>
-              <View style={[styles.compactFill, { width: `${calorieProgress * 100}%`, backgroundColor: theme.colors.primary }]} />
             </View>
           </Animated.View>
         </Animated.View>
@@ -676,7 +661,7 @@ const styles = StyleSheet.create({
   },
   heroFadeBottom: {
     bottom: 0,
-    height: 182,
+    height: 260,
     left: 0,
     position: 'absolute',
     right: 0,
@@ -687,28 +672,11 @@ const styles = StyleSheet.create({
     right: 20,
     top: 16,
   },
-  streakPill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(21,101,65,0.4)',
-    borderColor: 'rgba(134,255,192,0.18)',
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    gap: 6,
-    minHeight: 34,
-    paddingHorizontal: 13,
-  },
-  streakText: {
-    fontSize: 12,
-    lineHeight: 15,
-  },
   heroTitle: {
     color: '#F2FCF7',
     fontSize: 27,
     fontWeight: '800',
     lineHeight: 31,
-    marginTop: 12,
   },
   heroSubtitle: {
     color: '#B5C8BE',
@@ -805,36 +773,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 12,
     marginTop: 1,
-  },
-  compactBanner: {
-    backgroundColor: 'rgba(7,16,23,0.62)',
-    borderColor: 'rgba(134,255,192,0.15)',
-    borderRadius: 13,
-    borderWidth: StyleSheet.hairlineWidth,
-    bottom: 10,
-    gap: 6,
-    left: 16,
-    minHeight: 56,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    position: 'absolute',
-    right: 16,
-  },
-  compactText: {
-    color: '#E6F2EB',
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 16,
-  },
-  compactTrack: {
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 999,
-    height: 7,
-    overflow: 'hidden',
-  },
-  compactFill: {
-    borderRadius: 999,
-    height: '100%',
   },
   scrollContent: {
     gap: 12,

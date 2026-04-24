@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { addDays, endOfWeek, format, isSameDay, startOfWeek } from 'date-fns';
+import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
 import {
   Calendar,
   Check,
@@ -8,6 +8,7 @@ import {
   Circle,
   Clock,
   Dumbbell,
+  Flame,
   History,
   Minus,
   Pencil,
@@ -28,8 +29,8 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
-import { startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
-import { useActiveWorkout, useExercises, useRecentWorkouts, useRoutines } from '@/hooks/useAppQueries';
+import { WorkoutPlanItem, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
+import { useExercises, useRecentWorkouts, useRoutines, useWorkoutPlansForRange, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
@@ -37,7 +38,9 @@ import { useAppTheme } from '@/theme/theme';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type WorkoutTab = 'today' | 'program' | 'history' | 'exercises';
 type ExerciseFilter = 'All' | 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms';
-type ScheduleType = 'workout' | 'rest' | 'cardio' | 'recovery';
+type ScheduleType = 'workout' | 'rest';
+type ScheduleSource = 'plan' | 'program';
+type AdherenceStatus = 'done' | 'rest' | 'missed' | 'pending' | 'upcoming';
 
 const WORKOUT_TABS: Array<{ key: WorkoutTab; label: string }> = [
   { key: 'today', label: 'Today' },
@@ -54,9 +57,29 @@ const PROGRAM_WEEK: Array<{ day: string; title: string; type: ScheduleType }> = 
   { day: 'Wed', title: 'Lower', type: 'workout' },
   { day: 'Thu', title: 'Pull', type: 'workout' },
   { day: 'Fri', title: 'Rest', type: 'rest' },
-  { day: 'Sat', title: 'Cardio', type: 'cardio' },
-  { day: 'Sun', title: 'Recovery', type: 'recovery' },
+  { day: 'Sat', title: 'Cardio', type: 'workout' },
+  { day: 'Sun', title: 'Recovery', type: 'rest' },
 ];
+
+interface ProgramDay {
+  date: Date;
+  localDate: string;
+  day: string;
+  title: string;
+  type: ScheduleType;
+  source: ScheduleSource;
+  routineId?: string;
+  exerciseCount: number;
+  estimatedDurationMinutes: number;
+  scheduledTime?: string | null;
+}
+
+interface Adherence {
+  status: AdherenceStatus;
+  label: string;
+  followed: boolean;
+  tone: 'good' | 'muted' | 'bad';
+}
 
 interface ExerciseStats {
   prWeightKg?: number;
@@ -116,6 +139,114 @@ function routinePreview(routine: Routine): string {
     .join(' • ');
 }
 
+function localDateKey(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
+}
+
+function templateForDate(date: Date) {
+  const index = (date.getDay() + 6) % 7;
+  return PROGRAM_WEEK[index];
+}
+
+function findRoutineForTemplate(templateTitle: string, routines: Routine[]): Routine | undefined {
+  const title = templateTitle.toLowerCase();
+  return routines.find((routine) => {
+    const routineName = routine.name.toLowerCase();
+    return routineName === title || routineName.includes(title) || title.includes(routineName);
+  });
+}
+
+function buildProgramDay(date: Date, planMap: Map<string, WorkoutPlanItem>, routines: Routine[]): ProgramDay {
+  const localDate = localDateKey(date);
+  const plan = planMap.get(localDate);
+  if (plan) {
+    return {
+      date,
+      localDate,
+      day: format(date, 'EEE'),
+      title: plan.workoutName,
+      type: 'workout',
+      source: 'plan',
+      routineId: plan.routineId,
+      exerciseCount: plan.exerciseCount,
+      estimatedDurationMinutes: plan.estimatedDurationMinutes,
+      scheduledTime: plan.scheduledTime,
+    };
+  }
+
+  const template = templateForDate(date);
+  const routine = template.type === 'workout' ? findRoutineForTemplate(template.title, routines) : undefined;
+  return {
+    date,
+    localDate,
+    day: template.day,
+    title: template.title,
+    type: template.type,
+    source: 'program',
+    routineId: routine?.id,
+    exerciseCount: routine?.exercises.length ?? 0,
+    estimatedDurationMinutes: routine ? Math.max(35, routine.exercises.length * 10) : 40,
+  };
+}
+
+function sessionsByLocalDate(sessions: WorkoutSession[]): Map<string, WorkoutSession[]> {
+  const grouped = new Map<string, WorkoutSession[]>();
+  for (const session of sessions) {
+    const key = session.startedAt.slice(0, 10);
+    grouped.set(key, [...(grouped.get(key) ?? []), session]);
+  }
+  return grouped;
+}
+
+function workoutMatchesProgramDay(session: WorkoutSession, day: ProgramDay): boolean {
+  if (day.routineId) {
+    return session.routineId === day.routineId;
+  }
+  return true;
+}
+
+function getAdherence(day: ProgramDay, sessions: WorkoutSession[], todayKey: string): Adherence {
+  if (day.localDate > todayKey) {
+    return { status: 'upcoming', label: 'Upcoming', followed: false, tone: 'muted' };
+  }
+
+  const loggedSessions = sessions.filter((session) => session.status === 'active' || session.status === 'completed');
+  if (day.type === 'rest') {
+    if (loggedSessions.length > 0) {
+      return { status: 'missed', label: 'Missed', followed: false, tone: 'bad' };
+    }
+    return { status: 'rest', label: 'Rest', followed: true, tone: 'muted' };
+  }
+
+  const completedPlan = loggedSessions.some((session) => session.status === 'completed' && workoutMatchesProgramDay(session, day));
+  if (completedPlan) {
+    return { status: 'done', label: 'Done', followed: true, tone: 'good' };
+  }
+  if (day.localDate === todayKey) {
+    return { status: 'pending', label: 'Today', followed: false, tone: 'good' };
+  }
+  return { status: 'missed', label: 'Missed', followed: false, tone: 'bad' };
+}
+
+function calculateCurrentStreak(daysNewestFirst: ProgramDay[], groupedSessions: Map<string, WorkoutSession[]>, todayKey: string): number {
+  let streak = 0;
+  for (const day of daysNewestFirst) {
+    const adherence = getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey);
+    if (adherence.status === 'pending' || adherence.status === 'upcoming') {
+      continue;
+    }
+    if (!adherence.followed) {
+      break;
+    }
+    streak += 1;
+  }
+  return streak;
+}
+
+function scheduleTitleForCell(title: string): string {
+  return title.replace(/\s+Strength$/i, '');
+}
+
 export function WorkoutDashboardScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
@@ -123,10 +254,19 @@ export function WorkoutDashboardScreen() {
   const [tab, setTab] = useState<WorkoutTab>('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>('All');
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+  const streakStart = addDays(today, -35);
+  const planRangeStart = localDateKey(streakStart);
+  const planRangeEnd = localDateKey(weekEnd);
+  const weekLabel = `Week of ${format(weekStart, 'd MMM')}`;
 
   const routines = useRoutines();
-  const active = useActiveWorkout();
   const recent = useRecentWorkouts();
+  const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
+  const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const exercises = useExercises();
 
   const startRoutine = useMutation({
@@ -135,6 +275,7 @@ export function WorkoutDashboardScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
       navigation.navigate('LiveWorkout', { sessionId });
     },
   });
@@ -144,29 +285,37 @@ export function WorkoutDashboardScreen() {
     onSuccess: (sessionId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
       navigation.navigate('LiveWorkout', { sessionId });
     },
   });
 
-  if (routines.isLoading || recent.isLoading || active.isLoading || exercises.isLoading) {
+  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || workoutSessions.isLoading || exercises.isLoading) {
     return <LoadingState label="Loading workouts" />;
   }
 
   const routineList = routines.data ?? [];
   const recentList = recent.data ?? [];
+  const planList = workoutPlans.data ?? [];
+  const sessionRange = workoutSessions.data ?? [];
   const exerciseList = exercises.data ?? [];
   const suggestedRoutine = routineList[0];
+  const planMap = new Map(planList.map((plan) => [plan.localDate, plan]));
+  const groupedSessions = sessionsByLocalDate(sessionRange);
+  const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), planMap, routineList));
+  const todayProgramDay = buildProgramDay(today, planMap, routineList);
+  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), planMap, routineList));
+  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, todayKey);
 
-  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-  const weekLabel = `Week of ${format(weekStart, 'd MMM')}`;
-
-  const workoutsThisWeek = recentList.filter((workout) => {
+  const workoutsThisWeek = sessionRange.filter((workout) => {
     const startedAt = new Date(workout.startedAt);
-    return startedAt >= weekStart && startedAt <= weekEnd;
+    return workout.status === 'completed' && startedAt >= weekStart && startedAt <= weekEnd;
   });
-  const completedDays = new Set(workoutsThisWeek.map((workout) => format(new Date(workout.startedAt), 'yyyy-MM-dd')));
   const weekMinutes = workoutsThisWeek.reduce((sum, workout) => sum + durationMinutes(workout), 0);
+  const completedSetsThisWeek = workoutsThisWeek.flatMap((workout) =>
+    workout.exercises.flatMap((exercise) => exercise.sets.filter((set) => set.isCompleted)),
+  );
+  const weekVolume = completedSetsThisWeek.reduce((sum, set) => sum + (set.weightKg ?? 0) * (set.reps ?? 0), 0);
 
   const exerciseStats = buildExerciseStats(recentList);
 
@@ -243,65 +392,76 @@ export function WorkoutDashboardScreen() {
     );
 
   const renderTodayTab = () => {
-    const firstFive = PROGRAM_WEEK.slice(0, 5).map((day, index) => {
-      const date = addDays(weekStart, index);
-      const dateKey = format(date, 'yyyy-MM-dd');
-      const isToday = isSameDay(date, new Date());
-      const isPast = date < new Date() && !isToday;
-      const done = completedDays.has(dateKey);
+    const todaySessions = groupedSessions.get(todayKey) ?? [];
+    const activeToday = todaySessions.find(
+      (session) => session.status === 'active' && (todayProgramDay.type === 'rest' || workoutMatchesProgramDay(session, todayProgramDay)),
+    );
+    const isRestToday = todayProgramDay.type === 'rest';
+    const isPlannedToday = todayProgramDay.source === 'plan';
+    const topRoutine = isPlannedToday
+      ? routineList.find((routine) => routine.id === todayProgramDay.routineId)
+      : suggestedRoutine;
+    const topTitle = isPlannedToday ? "Today's workout" : 'Suggested workout';
+    const workoutTitle = isPlannedToday ? todayProgramDay.title : topRoutine?.name ?? 'Empty workout';
+    const workoutExerciseCount = isPlannedToday ? todayProgramDay.exerciseCount : topRoutine?.exercises.length ?? 0;
+    const workoutDuration = isPlannedToday
+      ? todayProgramDay.estimatedDurationMinutes
+      : topRoutine
+        ? Math.max(35, topRoutine.exercises.length * 10)
+        : 30;
 
-      if (day.type === 'rest') {
-        return { ...day, status: isPast ? 'Rest' : isToday ? 'Rest' : 'Upcoming', tone: 'muted' as const, icon: Minus };
-      }
-      if (done) {
-        return { ...day, status: 'Done', tone: 'good' as const, icon: Check };
-      }
-      if (isToday) {
-        return { ...day, status: 'Today', tone: 'good' as const, icon: Circle };
-      }
-      if (isPast) {
-        return { ...day, status: 'Missed', tone: 'muted' as const, icon: Minus };
-      }
-      return { ...day, status: 'Upcoming', tone: 'muted' as const, icon: Circle };
-    });
+    const firstFive = weekProgramDays.slice(0, 5).map((day) => ({
+      day,
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey),
+    }));
+    const streakVisualDays = weekProgramDays.map((day) => ({
+      day,
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey),
+    }));
 
     return (
       <>
-        {active.data ? (
-          <Card onPress={() => navigation.navigate('LiveWorkout', { sessionId: active.data!.id })} style={{ borderColor: theme.colors.warning }}>
-            <View style={styles.spaceBetween}>
-              <View>
-                <AppText variant="section">Continue active workout</AppText>
-                <AppText muted>{active.data.title}</AppText>
-              </View>
-              <Play color={theme.colors.warning} size={24} />
-            </View>
-          </Card>
-        ) : null}
-
         <Card style={styles.featureCard}>
           <View style={styles.spaceBetween}>
-            <AppText variant="section">Suggested next</AppText>
+            <AppText variant="section" style={{ color: theme.colors.primary }}>
+              {isRestToday ? "Today's workout" : topTitle}
+            </AppText>
             <Dumbbell size={20} color={theme.colors.primary} />
           </View>
           <View style={styles.suggestedRow}>
             <View style={[styles.suggestedIcon, { borderColor: theme.colors.primary }]}>
-              <Dumbbell size={24} color={theme.colors.primary} />
+              {isRestToday ? <Minus size={24} color={theme.colors.primary} /> : <Dumbbell size={24} color={theme.colors.primary} />}
             </View>
             <View>
               <AppText weight="800" style={styles.suggestedTitle}>
-                {suggestedRoutine?.name ?? 'Empty workout'}
+                {isRestToday ? 'Rest day' : workoutTitle}
               </AppText>
               <AppText muted>
-                {suggestedRoutine ? `${suggestedRoutine.exercises.length} exercises • ~${Math.max(35, suggestedRoutine.exercises.length * 10)} min` : 'Build from scratch'}
+                {isRestToday ? 'No workout planned today' : `${workoutExerciseCount} exercises • ~${workoutDuration} min`}
               </AppText>
             </View>
           </View>
-          <Button
-            label={suggestedRoutine ? 'Start workout' : 'Start empty workout'}
-            icon={Play}
-            onPress={() => (suggestedRoutine ? startRoutine.mutate(suggestedRoutine.id) : startEmpty.mutate())}
-          />
+          {!isRestToday ? (
+            <Button
+              label={activeToday ? 'View workout' : 'Start workout'}
+              icon={Play}
+              onPress={() => {
+                if (activeToday) {
+                  navigation.navigate('LiveWorkout', { sessionId: activeToday.id });
+                  return;
+                }
+                if (isPlannedToday && todayProgramDay.routineId) {
+                  startRoutine.mutate(todayProgramDay.routineId);
+                  return;
+                }
+                if (topRoutine) {
+                  startRoutine.mutate(topRoutine.id);
+                  return;
+                }
+                startEmpty.mutate();
+              }}
+            />
+          ) : null}
         </Card>
 
         <Card>
@@ -313,20 +473,23 @@ export function WorkoutDashboardScreen() {
             </View>
           </View>
           <View style={styles.weekRow}>
-            {firstFive.map((day, index) => {
-              const StatusIcon = day.icon;
-              const color = day.tone === 'good' ? theme.colors.primary : theme.colors.muted;
+            {firstFive.map(({ day, adherence }, index) => {
+              const StatusIcon = adherence.status === 'done' ? Check : adherence.status === 'rest' || adherence.status === 'missed' ? Minus : Circle;
+              const color =
+                adherence.tone === 'good' ? theme.colors.primary : adherence.tone === 'bad' ? theme.colors.danger : theme.colors.muted;
               return (
-                <View key={day.day} style={[styles.weekCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}>
+                <View key={day.localDate} style={[styles.weekCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}>
                   <AppText variant="small" muted>
                     {day.day.toUpperCase()}
                   </AppText>
-                  <AppText weight="700">{day.title}</AppText>
+                  <AppText weight="700" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.74} style={styles.weekTitle}>
+                    {scheduleTitleForCell(day.title)}
+                  </AppText>
                   <View style={[styles.weekStatusIcon, { borderColor: color }]}>
                     <StatusIcon size={16} color={color} />
                   </View>
                   <AppText weight="700" style={{ color }}>
-                    {day.status}
+                    {adherence.label}
                   </AppText>
                 </View>
               );
@@ -334,8 +497,58 @@ export function WorkoutDashboardScreen() {
           </View>
         </Card>
 
-        <AppText variant="section">Saved routines</AppText>
-        {renderSavedRoutines()}
+        <Card style={styles.streakCard}>
+          <View style={styles.streakHeader}>
+            <AppText variant="section">Streak</AppText>
+          </View>
+          <View style={styles.streakBody}>
+            <View style={styles.streakScore}>
+              <Flame size={29} color={theme.colors.warning} fill={theme.colors.warning} />
+              <AppText style={styles.streakCount} weight="800">{streakCount}</AppText>
+              <AppText muted>days</AppText>
+            </View>
+            <View style={[styles.streakDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.streakDots}>
+              {streakVisualDays.map(({ day, adherence }) => {
+                const dotColor = adherence.followed
+                  ? theme.colors.primary
+                  : adherence.status === 'missed'
+                    ? theme.colors.danger
+                    : theme.colors.surfaceAlt;
+                return (
+                  <View key={day.localDate} style={styles.streakDotCell}>
+                    <AppText muted variant="small">{day.day.slice(0, 1)}</AppText>
+                    <View style={[styles.streakDot, { backgroundColor: dotColor }]} />
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+          <AppText muted>{streakCount > 0 ? 'Keep it going!' : 'Follow the next planned day to start a streak.'}</AppText>
+        </Card>
+
+        <Card>
+          <View style={styles.spaceBetween}>
+            <AppText variant="section">Progress overview</AppText>
+            <AppText muted>This week</AppText>
+          </View>
+          <View style={styles.progressOverviewRow}>
+            <View style={styles.progressOverviewCell}>
+              <AppText muted>Workouts</AppText>
+              <AppText style={styles.progressOverviewValue}>{workoutsThisWeek.length}</AppText>
+            </View>
+            <View style={[styles.summaryDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.progressOverviewCell}>
+              <AppText muted>Sets</AppText>
+              <AppText style={styles.progressOverviewValue}>{completedSetsThisWeek.length}</AppText>
+            </View>
+            <View style={[styles.summaryDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.progressOverviewCell}>
+              <AppText muted>Volume (kg)</AppText>
+              <AppText style={styles.progressOverviewValue}>{Math.round(weekVolume).toLocaleString()}</AppText>
+            </View>
+          </View>
+        </Card>
       </>
     );
   };
@@ -628,6 +841,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 6,
   },
+  weekTitle: {
+    maxWidth: 56,
+  },
   weekStatusIcon: {
     alignItems: 'center',
     borderRadius: 15,
@@ -635,6 +851,60 @@ const styles = StyleSheet.create({
     height: 30,
     justifyContent: 'center',
     width: 30,
+  },
+  streakCard: {
+    gap: 8,
+  },
+  streakHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  streakBody: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  streakScore: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    minWidth: 112,
+  },
+  streakCount: {
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  streakDivider: {
+    height: 52,
+    width: StyleSheet.hairlineWidth,
+  },
+  streakDots: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  streakDotCell: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  streakDot: {
+    borderRadius: 999,
+    height: 12,
+    width: 12,
+  },
+  progressOverviewRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  progressOverviewCell: {
+    flex: 1,
+    gap: 8,
+    paddingVertical: 6,
+  },
+  progressOverviewValue: {
+    fontSize: 18,
+    fontWeight: '800',
   },
   programRow: {
     alignItems: 'flex-start',

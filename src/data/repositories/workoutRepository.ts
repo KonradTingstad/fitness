@@ -84,6 +84,16 @@ type WorkoutSessionRow = {
   version: number;
 };
 
+type WorkoutPlanRow = {
+  id: string;
+  routine_id: string;
+  workout_name: string;
+  local_date: string;
+  scheduled_time: string | null;
+  estimated_duration_minutes: number | null;
+  exercise_count: number;
+};
+
 type WorkoutExerciseRow = {
   id: string;
   workout_session_id: string;
@@ -128,6 +138,16 @@ export interface WorkoutSummary {
   totalVolumeKg: number;
   durationSeconds: number;
   prs: Array<{ label: string; value: string }>;
+}
+
+export interface WorkoutPlanItem {
+  id: string;
+  routineId: string;
+  workoutName: string;
+  localDate: string;
+  scheduledTime?: string | null;
+  estimatedDurationMinutes: number;
+  exerciseCount: number;
 }
 
 export async function listExercises(userId = DEMO_USER_ID): Promise<Exercise[]> {
@@ -185,6 +205,58 @@ export async function getRecentWorkouts(userId = DEMO_USER_ID, limit = 10): Prom
     sessions.push(await hydrateWorkoutSession(row));
   }
   return sessions;
+}
+
+export async function listWorkoutSessionsForRange(
+  startLocalDate: string,
+  endLocalDate: string,
+  userId = DEMO_USER_ID,
+): Promise<WorkoutSession[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<WorkoutSessionRow>(
+    `SELECT * FROM workout_sessions
+     WHERE user_id = ?
+       AND status IN ('active', 'completed')
+       AND deleted_at IS NULL
+       AND substr(started_at, 1, 10) BETWEEN ? AND ?
+     ORDER BY started_at DESC`,
+    [userId, startLocalDate, endLocalDate],
+  );
+  const sessions: WorkoutSession[] = [];
+  for (const row of rows) {
+    sessions.push(await hydrateWorkoutSession(row));
+  }
+  return sessions;
+}
+
+export async function listWorkoutPlansForRange(
+  startLocalDate: string,
+  endLocalDate: string,
+  userId = DEMO_USER_ID,
+): Promise<WorkoutPlanItem[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<WorkoutPlanRow>(
+    `SELECT wp.id, wp.routine_id, r.name AS workout_name, wp.local_date, wp.scheduled_time,
+            wp.estimated_duration_minutes, COUNT(re.id) AS exercise_count
+     FROM workout_plans wp
+     INNER JOIN routines r ON r.id = wp.routine_id AND r.deleted_at IS NULL
+     LEFT JOIN routine_exercises re ON re.routine_id = r.id AND re.deleted_at IS NULL
+     WHERE wp.user_id = ?
+       AND wp.local_date BETWEEN ? AND ?
+       AND wp.deleted_at IS NULL
+     GROUP BY wp.id, wp.routine_id, r.name, wp.local_date, wp.scheduled_time, wp.estimated_duration_minutes
+     ORDER BY wp.local_date ASC, CASE WHEN wp.scheduled_time IS NULL THEN 1 ELSE 0 END, wp.scheduled_time ASC`,
+    [userId, startLocalDate, endLocalDate],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    routineId: row.routine_id,
+    workoutName: row.workout_name,
+    localDate: row.local_date,
+    scheduledTime: row.scheduled_time,
+    exerciseCount: row.exercise_count,
+    estimatedDurationMinutes: row.estimated_duration_minutes ?? Math.max(30, row.exercise_count * 12),
+  }));
 }
 
 export async function startWorkoutFromRoutine(routineId: string, userId = DEMO_USER_ID): Promise<string> {

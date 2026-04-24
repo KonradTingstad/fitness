@@ -1,11 +1,12 @@
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { addDays, endOfWeek, format, startOfWeek } from 'date-fns';
+import { addDays, addMonths, addYears, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import {
   Calendar,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Circle,
@@ -45,6 +46,7 @@ type ExerciseFilter = 'All' | 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms';
 type ScheduleType = 'workout' | 'rest';
 type ScheduleSource = 'plan' | 'program';
 type AdherenceStatus = 'done' | 'rest' | 'missed' | 'pending' | 'upcoming';
+type HistoryCalendarMode = 'month' | 'year' | 'multiYear';
 
 const WORKOUT_GROUP_STORAGE_KEY = 'fitness.workoutGroups.v1';
 
@@ -56,6 +58,13 @@ const WORKOUT_TABS: Array<{ key: WorkoutTab; label: string }> = [
 ];
 
 const EXERCISE_FILTERS: ExerciseFilter[] = ['All', 'Chest', 'Back', 'Legs', 'Shoulders', 'Arms'];
+const HISTORY_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const HISTORY_CALENDAR_MODES: Array<{ key: HistoryCalendarMode; label: string }> = [
+  { key: 'month', label: 'Month' },
+  { key: 'year', label: 'Year' },
+  { key: 'multiYear', label: 'Multi-year' },
+];
+const HISTORY_MULTI_YEAR_COUNT = 5;
 
 const PROGRAM_WEEK: Array<{ day: string; title: string; type: ScheduleType }> = [
   { day: 'Mon', title: 'Upper', type: 'workout' },
@@ -279,6 +288,67 @@ function localDateKey(date: Date): string {
   return format(date, 'yyyy-MM-dd');
 }
 
+function buildMonthCalendarDays(month: Date): Array<Date | null> {
+  const firstDay = startOfMonth(month);
+  const lastDay = endOfMonth(month);
+  const leadingEmptyDays = (firstDay.getDay() + 6) % 7;
+  const days: Array<Date | null> = Array.from({ length: leadingEmptyDays }, () => null);
+
+  for (let day = 0; day < lastDay.getDate(); day += 1) {
+    days.push(addDays(firstDay, day));
+  }
+
+  while (days.length % 7 !== 0) {
+    days.push(null);
+  }
+
+  return days;
+}
+
+function buildYearHeatmapWeeks(year: number): Array<Array<Date | null>> {
+  const start = startOfWeek(new Date(year, 0, 1), { weekStartsOn: 1 });
+  const end = endOfWeek(new Date(year, 11, 31), { weekStartsOn: 1 });
+  const weeks: Array<Array<Date | null>> = [];
+  let cursor = start;
+
+  while (cursor <= end) {
+    const week: Array<Date | null> = [];
+    for (let day = 0; day < 7; day += 1) {
+      week.push(cursor.getFullYear() === year ? cursor : null);
+      cursor = addDays(cursor, 1);
+    }
+    weeks.push(week);
+  }
+
+  return weeks;
+}
+
+function latestCompletedWorkoutByLocalDate(sessions: WorkoutSession[]): Map<string, WorkoutSession> {
+  const workoutsByDate = new Map<string, WorkoutSession>();
+  for (const session of sessions) {
+    if (session.status !== 'completed') {
+      continue;
+    }
+    const key = session.startedAt.slice(0, 10);
+    if (!workoutsByDate.has(key)) {
+      workoutsByDate.set(key, session);
+    }
+  }
+  return workoutsByDate;
+}
+
+function completedWorkoutCountByLocalDate(sessions: WorkoutSession[]): Map<string, number> {
+  const countsByDate = new Map<string, number>();
+  for (const session of sessions) {
+    if (session.status !== 'completed') {
+      continue;
+    }
+    const key = session.startedAt.slice(0, 10);
+    countsByDate.set(key, (countsByDate.get(key) ?? 0) + 1);
+  }
+  return countsByDate;
+}
+
 function templateForDate(date: Date) {
   const index = (date.getDay() + 6) % 7;
   return PROGRAM_WEEK[index];
@@ -393,6 +463,8 @@ export function WorkoutDashboardScreen() {
   const [workoutGroups, setWorkoutGroups] = useState<WorkoutGroup[]>([]);
   const [groupsLoaded, setGroupsLoaded] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(() => new Set());
+  const [historyMonth, setHistoryMonth] = useState(() => new Date());
+  const [historyCalendarMode, setHistoryCalendarMode] = useState<HistoryCalendarMode>('month');
   const today = new Date();
   const todayKey = localDateKey(today);
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
@@ -400,12 +472,23 @@ export function WorkoutDashboardScreen() {
   const streakStart = addDays(today, -35);
   const planRangeStart = localDateKey(streakStart);
   const planRangeEnd = localDateKey(weekEnd);
+  const historyYear = historyMonth.getFullYear();
+  const historyMultiYearStartYear = historyYear - HISTORY_MULTI_YEAR_COUNT + 1;
+  const historyMonthStart = localDateKey(startOfMonth(historyMonth));
+  const historyMonthEnd = localDateKey(endOfMonth(historyMonth));
+  const historyCalendarRangeStart =
+    historyCalendarMode === 'month'
+      ? historyMonthStart
+      : localDateKey(new Date(historyCalendarMode === 'year' ? historyYear : historyMultiYearStartYear, 0, 1));
+  const historyCalendarRangeEnd =
+    historyCalendarMode === 'month' ? historyMonthEnd : localDateKey(new Date(historyYear, 11, 31));
   const weekLabel = `Week of ${format(weekStart, 'd MMM')}`;
 
   const routines = useRoutines();
   const recent = useRecentWorkouts();
   const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
+  const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRangeStart, historyCalendarRangeEnd);
   const exercises = useExercises();
   const routineList = routines.data ?? EMPTY_ROUTINES;
 
@@ -475,17 +558,22 @@ export function WorkoutDashboardScreen() {
     },
   });
 
-  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || workoutSessions.isLoading || exercises.isLoading) {
+  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || workoutSessions.isLoading || historyCalendarSessions.isLoading || exercises.isLoading) {
     return <LoadingState label="Loading workouts" />;
   }
 
   const recentList = recent.data ?? [];
   const planList = workoutPlans.data ?? [];
   const sessionRange = workoutSessions.data ?? [];
+  const historyCalendarSessionRange = historyCalendarSessions.data ?? [];
   const exerciseList = exercises.data ?? [];
   const suggestedRoutine = routineList[0];
   const planMap = new Map(planList.map((plan) => [plan.localDate, plan]));
   const groupedSessions = sessionsByLocalDate(sessionRange);
+  const historyWorkoutsByDate = latestCompletedWorkoutByLocalDate(historyCalendarSessionRange);
+  const historyWorkoutCountsByDate = completedWorkoutCountByLocalDate(historyCalendarSessionRange);
+  const historyCalendarDays = buildMonthCalendarDays(historyMonth);
+  const historyCalendarYears = Array.from({ length: HISTORY_MULTI_YEAR_COUNT }, (_, index) => historyYear - index);
   const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), planMap, routineList));
   const todayProgramDay = buildProgramDay(today, planMap, routineList);
   const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), planMap, routineList));
@@ -995,6 +1083,196 @@ export function WorkoutDashboardScreen() {
     </>
   );
 
+  const getHistoryHeatmapStyle = (date?: Date | null) => {
+    if (!date) {
+      return { backgroundColor: 'transparent', opacity: 0 };
+    }
+    const count = historyWorkoutCountsByDate.get(localDateKey(date)) ?? 0;
+    if (count <= 0) {
+      return { backgroundColor: theme.colors.surfaceAlt, opacity: 0.72 };
+    }
+    return { backgroundColor: theme.colors.primary, opacity: Math.min(1, 0.54 + count * 0.14) };
+  };
+
+  const calendarTitle =
+    historyCalendarMode === 'month'
+      ? format(historyMonth, 'MMMM yyyy')
+      : historyCalendarMode === 'year'
+        ? String(historyYear)
+        : `${historyMultiYearStartYear}-${historyYear}`;
+
+  const shiftHistoryCalendar = (direction: -1 | 1) => {
+    setHistoryMonth((current) => {
+      if (historyCalendarMode === 'month') {
+        return addMonths(current, direction);
+      }
+      return addYears(current, direction * (historyCalendarMode === 'multiYear' ? HISTORY_MULTI_YEAR_COUNT : 1));
+    });
+  };
+
+  const renderHistoryCalendarTabs = () => (
+    <View style={[styles.calendarModeRow, { backgroundColor: theme.colors.surfaceAlt }]}>
+      {HISTORY_CALENDAR_MODES.map((item) => {
+        const active = historyCalendarMode === item.key;
+        return (
+          <Pressable
+            key={item.key}
+            onPress={() => setHistoryCalendarMode(item.key)}
+            style={({ pressed }) => [
+              styles.calendarModeButton,
+              { backgroundColor: active ? theme.colors.surface : 'transparent', opacity: pressed ? 0.82 : 1 },
+            ]}
+          >
+            <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.text : theme.colors.muted }}>
+              {item.label}
+            </AppText>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+
+  const renderMonthCalendar = () => (
+    <>
+      <View style={styles.monthWeekdayRow}>
+        {HISTORY_WEEKDAYS.map((weekday) => (
+          <View key={weekday} style={styles.monthWeekdayCell}>
+            <AppText muted variant="small">
+              {weekday}
+            </AppText>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.monthGrid}>
+        {historyCalendarDays.map((date, index) => {
+          if (!date) {
+            return <View key={`empty-${index}`} style={styles.monthDayCell} />;
+          }
+
+          const workout = historyWorkoutsByDate.get(localDateKey(date));
+          return (
+            <Pressable
+              key={localDateKey(date)}
+              disabled={!workout}
+              onPress={workout ? () => navigation.navigate('WorkoutSummary', { sessionId: workout.id }) : undefined}
+              style={({ pressed }) => [styles.monthDayCell, { opacity: pressed ? 0.72 : 1 }]}
+            >
+              <View
+                style={[
+                  styles.monthDayCircle,
+                  workout && {
+                    borderColor: theme.colors.primary,
+                    borderWidth: 1.6,
+                    shadowColor: theme.colors.primary,
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: 0.18,
+                    shadowRadius: 4,
+                  },
+                ]}
+              >
+                <AppText weight="600">{date.getDate()}</AppText>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </>
+  );
+
+  const renderMiniMonth = (monthDate: Date) => {
+    const selectedMonth = monthDate.getFullYear() === historyYear && monthDate.getMonth() === historyMonth.getMonth();
+    return (
+      <Pressable
+        key={format(monthDate, 'yyyy-MM')}
+        onPress={() => {
+          setHistoryMonth(monthDate);
+          setHistoryCalendarMode('month');
+        }}
+        style={({ pressed }) => [
+          styles.yearMonthTile,
+          { borderColor: selectedMonth ? theme.colors.primary : 'transparent', opacity: pressed ? 0.78 : 1 },
+        ]}
+      >
+        <AppText weight="800" variant="small" style={styles.yearMonthTitle}>
+          {format(monthDate, 'MMM')}
+        </AppText>
+        <View style={styles.yearMonthHeatmap}>
+          {buildMonthCalendarDays(monthDate).map((date, index) => (
+            <View key={`${format(monthDate, 'yyyy-MM')}-${index}`} style={[styles.yearMonthDot, getHistoryHeatmapStyle(date)]} />
+          ))}
+        </View>
+      </Pressable>
+    );
+  };
+
+  const renderYearCalendar = () => (
+    <View style={styles.yearCalendarGrid}>
+      {Array.from({ length: 12 }, (_, index) => renderMiniMonth(new Date(historyYear, index, 1)))}
+    </View>
+  );
+
+  const renderYearStrip = (year: number) => (
+    <Pressable
+      key={year}
+      onPress={() => {
+        setHistoryMonth(new Date(year, historyMonth.getMonth(), 1));
+        setHistoryCalendarMode('year');
+      }}
+      style={({ pressed }) => [
+        styles.multiYearItem,
+        { borderColor: year === historyYear ? theme.colors.primary : theme.colors.border, opacity: pressed ? 0.78 : 1 },
+      ]}
+    >
+      <AppText weight="800">{year}</AppText>
+      <View style={styles.multiYearStrip}>
+        {buildYearHeatmapWeeks(year).map((week, weekIndex) => (
+          <View key={`${year}-week-${weekIndex}`} style={styles.multiYearWeek}>
+            {week.map((date, dayIndex) => (
+              <View key={`${year}-${weekIndex}-${dayIndex}`} style={[styles.multiYearDot, getHistoryHeatmapStyle(date)]} />
+            ))}
+          </View>
+        ))}
+      </View>
+    </Pressable>
+  );
+
+  const renderMultiYearCalendar = () => (
+    <View style={styles.multiYearList}>
+      {historyCalendarYears.map((year) => renderYearStrip(year))}
+    </View>
+  );
+
+  const renderHistoryCalendar = () => (
+    <Card style={styles.monthCalendarCard}>
+      {renderHistoryCalendarTabs()}
+
+      <View style={styles.monthHeader}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => shiftHistoryCalendar(-1)}
+          style={({ pressed }) => [styles.monthNavButton, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <ChevronLeft size={20} color={theme.colors.text} />
+        </Pressable>
+        <AppText weight="800" style={styles.monthTitle}>
+          {calendarTitle}
+        </AppText>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => shiftHistoryCalendar(1)}
+          style={({ pressed }) => [styles.monthNavButton, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <ChevronRight size={20} color={theme.colors.text} />
+        </Pressable>
+      </View>
+
+      {historyCalendarMode === 'month' ? renderMonthCalendar() : null}
+      {historyCalendarMode === 'year' ? renderYearCalendar() : null}
+      {historyCalendarMode === 'multiYear' ? renderMultiYearCalendar() : null}
+    </Card>
+  );
+
   const renderHistoryTab = () => (
     <>
       <Card>
@@ -1016,6 +1294,8 @@ export function WorkoutDashboardScreen() {
           </View>
         </View>
       </Card>
+
+      {renderHistoryCalendar()}
 
       <View style={styles.sectionTitle}>
         <AppText variant="section">Recent history</AppText>
@@ -1324,6 +1604,111 @@ const styles = StyleSheet.create({
   },
   programTitle: {
     fontSize: 12,
+  },
+  monthCalendarCard: {
+    gap: 12,
+  },
+  calendarModeRow: {
+    borderRadius: 9,
+    flexDirection: 'row',
+    padding: 3,
+  },
+  calendarModeButton: {
+    alignItems: 'center',
+    borderRadius: 7,
+    flex: 1,
+    minHeight: 34,
+    justifyContent: 'center',
+  },
+  monthHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  monthNavButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  monthTitle: {
+    fontSize: 16,
+  },
+  monthWeekdayRow: {
+    flexDirection: 'row',
+  },
+  monthWeekdayCell: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  monthDayCell: {
+    alignItems: 'center',
+    height: 38,
+    justifyContent: 'center',
+    width: `${100 / 7}%`,
+  },
+  monthDayCircle: {
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderRadius: 15,
+    borderWidth: 1.6,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  yearCalendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  yearMonthTile: {
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    padding: 6,
+    width: '31.3%',
+  },
+  yearMonthTitle: {
+    textAlign: 'center',
+  },
+  yearMonthHeatmap: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 2,
+    width: 54,
+  },
+  yearMonthDot: {
+    borderRadius: 2,
+    height: 6,
+    width: 6,
+  },
+  multiYearList: {
+    gap: 12,
+  },
+  multiYearItem: {
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+    padding: 8,
+  },
+  multiYearStrip: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  multiYearWeek: {
+    gap: 2,
+  },
+  multiYearDot: {
+    borderRadius: 1.5,
+    height: 4,
+    width: 4,
   },
   listCard: {
     gap: 0,

@@ -1,0 +1,6 @@
+# Edge Function settings for this project.
+# `sync-upsert` validates Supabase auth inside function code,
+# so platform pre-verification is disabled to support modern JWT signing keys (ES256).
+
+[functions.sync-upsert]
+verify_jwt = false

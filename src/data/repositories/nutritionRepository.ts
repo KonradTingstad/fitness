@@ -1,8 +1,8 @@
 import { getDatabase } from '@/data/db/database';
 import { createId, DEMO_USER_ID } from '@/data/db/ids';
 import { enqueueSync } from '@/data/sync/syncQueue';
-import { toLocalDateKey } from '@/domain/calculations/dates';
-import { sumDiaryEntries } from '@/domain/calculations/nutrition';
+import { shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
+import { calculateCalorieGoalStreak, sumDiaryEntries } from '@/domain/calculations/nutrition';
 import {
   DiaryDay,
   DiaryEntry,
@@ -78,6 +78,15 @@ export interface DiarySummary {
   byMeal: Record<MealSlot, DiaryEntry[]>;
 }
 
+export interface FoodSuggestion {
+  food: FoodItem;
+  totalLogs: number;
+  commonMealSlot: MealSlot;
+  lastLoggedAt: string;
+}
+
+const CALORIE_STREAK_LOOKBACK_DAYS = 90;
+
 export async function getDiary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<DiarySummary> {
   const db = await getDatabase();
   const dayId = await getOrCreateDiaryDay(localDate, userId);
@@ -124,6 +133,35 @@ export async function getNutritionTotalsForDates(localDates: string[], userId = 
   return rows;
 }
 
+export async function getCalorieGoalStreak(endLocalDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const lookbackStart = shiftLocalDate(endLocalDate, -(CALORIE_STREAK_LOOKBACK_DAYS - 1));
+  const [goalRow, rows] = await Promise.all([
+    db.getFirstAsync<{ calorie_target: number }>(
+      `SELECT calorie_target
+       FROM goal_settings
+       WHERE user_id = ? AND deleted_at IS NULL
+       LIMIT 1`,
+      [userId],
+    ),
+    db.getAllAsync<{ local_date: string; calories: number }>(
+      `SELECT
+         d.local_date,
+         COALESCE(SUM(e.calories_snapshot * e.servings), 0) as calories
+       FROM diary_days d
+       LEFT JOIN diary_entries e ON e.diary_day_id = d.id AND e.deleted_at IS NULL
+       WHERE d.user_id = ?
+         AND d.deleted_at IS NULL
+         AND d.local_date BETWEEN ? AND ?
+       GROUP BY d.local_date`,
+      [userId, lookbackStart, endLocalDate],
+    ),
+  ]);
+
+  const caloriesByDate = new Map(rows.map((row) => [row.local_date, row.calories]));
+  return calculateCalorieGoalStreak(endLocalDate, goalRow?.calorie_target ?? 0, caloriesByDate, 0.1, CALORIE_STREAK_LOOKBACK_DAYS);
+}
+
 export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Promise<FoodItem[]> {
   const db = await getDatabase();
   const search = `%${query.trim()}%`;
@@ -151,6 +189,42 @@ export async function getRecentFoods(userId = DEMO_USER_ID): Promise<FoodItem[]>
     [userId],
   );
   return rows.map(mapFood);
+}
+
+export async function getFrequentlyLoggedFoods(userId = DEMO_USER_ID): Promise<FoodSuggestion[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<FoodRow & { total_logs: number; common_meal_slot: MealSlot; last_logged_at: string }>(
+    `SELECT
+       f.*,
+       COUNT(e.id) as total_logs,
+       MAX(e.logged_at) as last_logged_at,
+       (
+         SELECT e2.meal_slot
+         FROM diary_entries e2
+         WHERE e2.user_id = ?
+           AND e2.deleted_at IS NULL
+           AND e2.food_item_id = f.id
+         GROUP BY e2.meal_slot
+         ORDER BY COUNT(e2.id) DESC, MAX(e2.logged_at) DESC
+         LIMIT 1
+       ) as common_meal_slot
+     FROM diary_entries e
+     JOIN food_items f ON f.id = e.food_item_id
+     WHERE e.user_id = ?
+       AND e.deleted_at IS NULL
+       AND f.deleted_at IS NULL
+     GROUP BY f.id
+     ORDER BY total_logs DESC, last_logged_at DESC
+     LIMIT 8`,
+    [userId, userId],
+  );
+
+  return rows.map((row) => ({
+    food: mapFood(row),
+    totalLogs: row.total_logs,
+    commonMealSlot: row.common_meal_slot,
+    lastLoggedAt: row.last_logged_at,
+  }));
 }
 
 export async function addDiaryEntry(input: {
@@ -340,6 +414,113 @@ export async function getSavedMeals(userId = DEMO_USER_ID): Promise<SavedMeal[]>
   return meals;
 }
 
+export async function renameSavedMeal(savedMealId: string, name: string, userId = DEMO_USER_ID): Promise<void> {
+  const nextName = name.trim();
+  if (!nextName.length) {
+    throw new Error('Meal name cannot be empty.');
+  }
+
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE saved_meals
+     SET name = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [nextName, now, savedMealId, userId],
+  );
+  await enqueueSync('saved_meal', savedMealId, 'update', { name: nextName });
+}
+
+export async function duplicateSavedMeal(savedMealId: string, userId = DEMO_USER_ID): Promise<string> {
+  const db = await getDatabase();
+  const sourceMeal = await db.getFirstAsync<{
+    name: string;
+    notes: string | null;
+    is_favorite: number;
+  }>('SELECT name, notes, is_favorite FROM saved_meals WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [savedMealId, userId]);
+
+  if (!sourceMeal) {
+    throw new Error('Saved meal not found.');
+  }
+
+  const [sourceItems, nameRows] = await Promise.all([
+    db.getAllAsync<{
+      food_item_id: string;
+      servings: number;
+      meal_slot: MealSlot | null;
+    }>('SELECT food_item_id, servings, meal_slot FROM saved_meal_items WHERE saved_meal_id = ? AND deleted_at IS NULL', [savedMealId]),
+    db.getAllAsync<{ name: string }>('SELECT name FROM saved_meals WHERE user_id = ? AND deleted_at IS NULL', [userId]),
+  ]);
+
+  const duplicateName = buildDuplicateSavedMealName(
+    sourceMeal.name,
+    new Set(nameRows.map((row) => row.name.trim().toLowerCase())),
+  );
+
+  const now = new Date().toISOString();
+  const duplicatedMealId = createId('savedmeal');
+  await db.runAsync(
+    `INSERT INTO saved_meals
+    (id, user_id, name, notes, is_favorite, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [duplicatedMealId, userId, duplicateName, sourceMeal.notes, sourceMeal.is_favorite, now, now, null, 'pending', 1],
+  );
+  await enqueueSync('saved_meal', duplicatedMealId, 'insert', {
+    userId,
+    sourceSavedMealId: savedMealId,
+    name: duplicateName,
+    notes: sourceMeal.notes,
+    isFavorite: Boolean(sourceMeal.is_favorite),
+  });
+
+  for (const sourceItem of sourceItems) {
+    const duplicatedItemId = createId('savedmealitem');
+    await db.runAsync(
+      `INSERT INTO saved_meal_items
+      (id, saved_meal_id, food_item_id, servings, meal_slot, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        duplicatedItemId,
+        duplicatedMealId,
+        sourceItem.food_item_id,
+        sourceItem.servings,
+        sourceItem.meal_slot,
+        now,
+        now,
+        null,
+        'pending',
+        1,
+      ],
+    );
+    await enqueueSync('saved_meal_item', duplicatedItemId, 'insert', {
+      savedMealId: duplicatedMealId,
+      foodItemId: sourceItem.food_item_id,
+      servings: sourceItem.servings,
+      mealSlot: sourceItem.meal_slot,
+    });
+  }
+
+  return duplicatedMealId;
+}
+
+export async function deleteSavedMeal(savedMealId: string, userId = DEMO_USER_ID): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE saved_meals
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [now, now, savedMealId, userId],
+  );
+  await db.runAsync(
+    `UPDATE saved_meal_items
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE saved_meal_id = ? AND deleted_at IS NULL`,
+    [now, now, savedMealId],
+  );
+  await enqueueSync('saved_meal', savedMealId, 'delete', { id: savedMealId });
+}
+
 export async function getRecipes(userId = DEMO_USER_ID): Promise<Recipe[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<{
@@ -369,6 +550,20 @@ export async function getRecipes(userId = DEMO_USER_ID): Promise<Recipe[]> {
     syncStatus: row.sync_status,
     version: row.version,
   }));
+}
+
+function buildDuplicateSavedMealName(sourceName: string, existingNames: Set<string>): string {
+  const normalizedSourceName = sourceName.trim() || 'Meal';
+  const baseName = `${normalizedSourceName} Copy`;
+  let candidate = baseName;
+  let suffix = 2;
+
+  while (existingNames.has(candidate.toLowerCase())) {
+    candidate = `${baseName} ${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
 }
 
 export async function logSavedMeal(savedMealId: string, mealSlot: MealSlot, localDate: string, userId = DEMO_USER_ID): Promise<void> {

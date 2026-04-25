@@ -110,12 +110,15 @@ export async function completeOnboarding(input: OnboardingForm, userId = DEMO_US
 }
 
 export async function updateGoals(
-  patch: Partial<Pick<GoalSettings, 'calorieTarget' | 'proteinTargetG' | 'carbTargetG' | 'fatTargetG' | 'waterTargetMl' | 'workoutsPerWeekTarget'>>,
+  patch: Partial<
+    Pick<GoalSettings, 'goal' | 'calorieTarget' | 'proteinTargetG' | 'carbTargetG' | 'fatTargetG' | 'waterTargetMl' | 'workoutsPerWeekTarget'>
+  >,
   userId = DEMO_USER_ID,
 ): Promise<void> {
   const db = await getDatabase();
   const current = (await db.getFirstAsync<GoalsRow>('SELECT * FROM goal_settings WHERE user_id = ?', [userId]))!;
   const next = {
+    goal: patch.goal ?? current.goal,
     calorieTarget: patch.calorieTarget ?? current.calorie_target,
     proteinTargetG: patch.proteinTargetG ?? current.protein_target_g,
     carbTargetG: patch.carbTargetG ?? current.carb_target_g,
@@ -126,10 +129,11 @@ export async function updateGoals(
   const now = new Date().toISOString();
   await db.runAsync(
     `UPDATE goal_settings
-     SET calorie_target = ?, protein_target_g = ?, carb_target_g = ?, fat_target_g = ?, water_target_ml = ?, workouts_per_week_target = ?,
+     SET goal = ?, calorie_target = ?, protein_target_g = ?, carb_target_g = ?, fat_target_g = ?, water_target_ml = ?, workouts_per_week_target = ?,
          updated_at = ?, sync_status = 'pending', version = version + 1
      WHERE user_id = ?`,
     [
+      next.goal,
       next.calorieTarget,
       next.proteinTargetG,
       next.carbTargetG,
@@ -141,6 +145,35 @@ export async function updateGoals(
     ],
   );
   await enqueueSync('goal_settings', userId, 'update', next);
+}
+
+export async function getMealsPerDayTarget(userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const key = `meals_per_day_target:${userId}`;
+  const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [key]);
+  if (!row) {
+    return 4;
+  }
+
+  const parsed = Number.parseInt(row.value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 4;
+  }
+
+  return parsed;
+}
+
+export async function updateMealsPerDayTarget(target: number, userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const normalized = Math.max(1, Math.min(12, Math.round(target)));
+  const key = `meals_per_day_target:${userId}`;
+  await db.runAsync(
+    `INSERT INTO app_metadata (key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, String(normalized)],
+  );
+  return normalized;
 }
 
 function mapProfile(row: ProfileRow): UserProfile {

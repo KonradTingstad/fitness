@@ -5,10 +5,8 @@ import { useState } from 'react';
 import { Alert, StyleSheet, TextInput, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
-import { Button } from '@/components/Button';
-import { Card } from '@/components/Card';
-import { Screen } from '@/components/Screen';
 import { addDiaryEntry, createCustomFood } from '@/data/repositories/nutritionRepository';
+import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
 import { customFoodSchema } from '@/domain/validation/forms';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
@@ -53,27 +51,29 @@ export function CustomFoodScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(route.params.localDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.foodSearch('') });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
+      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
       navigation.goBack();
     },
     onError: (error) => Alert.alert('Custom food', error instanceof Error ? error.message : 'Unable to save food.'),
   });
 
   return (
-    <Screen>
-      <Card>
+    <NutritionScreen>
+      <NutritionCard>
         <AppText variant="section">Food identity</AppText>
         <Field label="Name" value={form.name} onChangeText={(name) => setForm((current) => ({ ...current, name }))} />
         <Field label="Brand" value={form.brandName} onChangeText={(brandName) => setForm((current) => ({ ...current, brandName }))} />
-      </Card>
-      <Card>
+      </NutritionCard>
+      <NutritionCard>
         <AppText variant="section">Serving</AppText>
         <View style={styles.two}>
           <Field label="Size" value={form.servingSize} onChangeText={(servingSize) => setForm((current) => ({ ...current, servingSize }))} keyboardType="decimal-pad" />
           <Field label="Unit" value={form.servingUnit} onChangeText={(servingUnit) => setForm((current) => ({ ...current, servingUnit }))} />
         </View>
         <Field label="Grams per serving" value={form.gramsPerServing} onChangeText={(gramsPerServing) => setForm((current) => ({ ...current, gramsPerServing }))} keyboardType="decimal-pad" />
-      </Card>
-      <Card>
+      </NutritionCard>
+      <NutritionCard>
         <AppText variant="section">Nutrition per serving</AppText>
         <View style={styles.two}>
           <Field label="Calories" value={form.calories} onChangeText={(calories) => setForm((current) => ({ ...current, calories }))} keyboardType="decimal-pad" />
@@ -87,12 +87,12 @@ export function CustomFoodScreen() {
           <Field label="Fiber" value={form.fiberG} onChangeText={(fiberG) => setForm((current) => ({ ...current, fiberG }))} keyboardType="decimal-pad" />
           <Field label="Sodium mg" value={form.sodiumMg} onChangeText={(sodiumMg) => setForm((current) => ({ ...current, sodiumMg }))} keyboardType="decimal-pad" />
         </View>
-      </Card>
-      <Button label="Save and log" icon={Save} onPress={() => save.mutate()} />
+      </NutritionCard>
+      <NutritionButton label="Save and log" icon={Save} onPress={() => save.mutate()} />
       <AppText muted variant="small" style={{ color: theme.colors.muted }}>
         Custom foods are stored locally first and queued for sync when Supabase is configured.
       </AppText>
-    </Screen>
+    </NutritionScreen>
   );
 }
 
@@ -116,7 +116,7 @@ function Field({
         onChangeText={onChangeText}
         keyboardType={keyboardType ?? 'default'}
         placeholderTextColor={theme.colors.muted}
-        style={[styles.input, { color: theme.colors.text, backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border }]}
+        style={[styles.input, { color: theme.colors.text, backgroundColor: 'rgba(36,44,54,0.82)' }]}
       />
     </View>
   );
@@ -133,7 +133,6 @@ const styles = StyleSheet.create({
   },
   input: {
     borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
     fontSize: 15,
     fontWeight: '700',
     minHeight: 48,

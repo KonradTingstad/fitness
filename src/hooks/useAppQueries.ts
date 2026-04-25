@@ -1,14 +1,23 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { getBodyWeightTrend, getDashboardSummary } from '@/data/repositories/dashboardRepository';
-import { getDiary, getNutritionTotalsForDates, getRecentFoods, getRecipes, getSavedMeals, searchFoodItems } from '@/data/repositories/nutritionRepository';
+import {
+  getCalorieGoalStreak,
+  getDiary,
+  getFrequentlyLoggedFoods,
+  getNutritionTotalsForDates,
+  getRecentFoods,
+  getRecipes,
+  getSavedMeals,
+  searchFoodItems,
+} from '@/data/repositories/nutritionRepository';
 import {
   getProgressOverviewStats,
   getProgressWidgetSeries,
   listProgressOverviewModules,
   listProgressWidgets,
 } from '@/data/repositories/progressWidgetsRepository';
-import { getProfileBundle } from '@/data/repositories/settingsRepository';
+import { getMealsPerDayTarget, getProfileBundle } from '@/data/repositories/settingsRepository';
 import { ProgressWidgetGrouping, ProgressWidgetMetric, ProgressWidgetTimeRange } from '@/features/progress/widgets/types';
 import {
   getActiveWorkout,
@@ -21,7 +30,7 @@ import {
   listExercises,
   listRoutines,
 } from '@/data/repositories/workoutRepository';
-import { lastNDays, toLocalDateKey } from '@/domain/calculations/dates';
+import { lastNDays, shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
 import { queryKeys } from '@/hooks/queryKeys';
 
 export function useDashboard() {
@@ -65,6 +74,21 @@ export function useDiary(localDate = toLocalDateKey()) {
   return useQuery({ queryKey: queryKeys.diary(localDate), queryFn: () => getDiary(localDate) });
 }
 
+export function useWeeklyCalories(localDate = toLocalDateKey()) {
+  const dates = Array.from({ length: 7 }, (_, index) => shiftLocalDate(localDate, index - 6));
+  return useQuery({
+    queryKey: queryKeys.weeklyCalories(localDate),
+    queryFn: () => getNutritionTotalsForDates(dates),
+  });
+}
+
+export function useCalorieStreak(localDate = toLocalDateKey()) {
+  return useQuery({
+    queryKey: queryKeys.calorieStreak(localDate),
+    queryFn: () => getCalorieGoalStreak(localDate),
+  });
+}
+
 export function useFoodSearch(query: string) {
   return useQuery({
     queryKey: queryKeys.foodSearch(query),
@@ -77,11 +101,19 @@ export function useRecentFoods() {
   return useQuery({ queryKey: queryKeys.recentFoods, queryFn: () => getRecentFoods() });
 }
 
+export function useFrequentlyLoggedFoods() {
+  return useQuery({ queryKey: queryKeys.frequentlyLoggedFoods, queryFn: () => getFrequentlyLoggedFoods() });
+}
+
 export function useNutritionLibrary() {
   return useQuery({
-    queryKey: ['nutritionLibrary'],
+    queryKey: queryKeys.nutritionLibrary,
     queryFn: async () => ({ savedMeals: await getSavedMeals(), recipes: await getRecipes() }),
   });
+}
+
+export function useMealsPerDayTarget() {
+  return useQuery({ queryKey: queryKeys.mealsPerDayTarget, queryFn: () => getMealsPerDayTarget() });
 }
 
 export function useProfileBundle() {

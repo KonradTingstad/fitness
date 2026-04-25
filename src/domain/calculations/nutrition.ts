@@ -1,4 +1,5 @@
 import { DiaryEntry, GoalSettings, NutritionTotals } from '@/domain/models';
+import { shiftLocalDate } from '@/domain/calculations/dates';
 
 export const emptyNutritionTotals = (): NutritionTotals => ({
   calories: 0,
@@ -55,6 +56,48 @@ export function adherencePercent(consumed: number, target: number, tolerance = 0
   }
   const distance = consumed < lower ? lower - consumed : consumed - upper;
   return Math.max(0, Math.round(100 - (distance / target) * 100));
+}
+
+export function calculateCalorieGoalStreak(
+  endLocalDate: string,
+  targetCalories: number,
+  caloriesByDate: Map<string, number>,
+  tolerance = 0.1,
+  maxLookbackDays = 90,
+): number {
+  if (targetCalories <= 0 || maxLookbackDays <= 0) {
+    return 0;
+  }
+
+  const lowerBound = targetCalories * (1 - tolerance);
+  let streak = 0;
+
+  for (let offset = 0; offset < maxLookbackDays; offset += 1) {
+    const date = shiftLocalDate(endLocalDate, -offset);
+    const calories = caloriesByDate.get(date);
+
+    if (typeof calories !== 'number') {
+      if (offset === 0) {
+        continue;
+      }
+      break;
+    }
+
+    const hitGoal = adherencePercent(calories, targetCalories, tolerance) === 100;
+    if (hitGoal) {
+      streak += 1;
+      continue;
+    }
+
+    // Today's intake can still be in progress if below the lower bound.
+    if (offset === 0 && calories < lowerBound) {
+      continue;
+    }
+
+    break;
+  }
+
+  return streak;
 }
 
 export function scaleFoodNutrients<T extends NutritionTotals>(nutrients: T, servings: number): T {

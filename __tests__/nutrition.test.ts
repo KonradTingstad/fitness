@@ -1,4 +1,4 @@
-import { adherencePercent, remainingMacros, sumDiaryEntries } from '@/domain/calculations/nutrition';
+import { adherencePercent, calculateCalorieGoalStreak, remainingMacros, sumDiaryEntries } from '@/domain/calculations/nutrition';
 import { DiaryEntry, GoalSettings } from '@/domain/models';
 
 const baseEntry: DiaryEntry = {
@@ -58,5 +58,27 @@ describe('nutrition calculations', () => {
   it('scores adherence inside tolerance as complete', () => {
     expect(adherencePercent(2520, 2500, 0.05)).toBe(100);
     expect(adherencePercent(1800, 2500, 0.05)).toBeLessThan(100);
+  });
+
+  it('counts consecutive calorie-goal days and skips an in-progress today', () => {
+    const caloriesByDate = new Map<string, number>([
+      ['2026-04-20', 2480],
+      ['2026-04-21', 2500],
+      ['2026-04-22', 2630],
+      ['2026-04-23', 2410],
+      ['2026-04-24', 2520],
+      ['2026-04-25', 1600],
+    ]);
+
+    expect(calculateCalorieGoalStreak('2026-04-25', 2500, caloriesByDate, 0.1, 30)).toBe(5);
+  });
+
+  it('resets streak when today is outside the goal range', () => {
+    const caloriesByDate = new Map<string, number>([
+      ['2026-04-24', 2500],
+      ['2026-04-25', 2900],
+    ]);
+
+    expect(calculateCalorieGoalStreak('2026-04-25', 2500, caloriesByDate, 0.1, 30)).toBe(0);
   });
 });

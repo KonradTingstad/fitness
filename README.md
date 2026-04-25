@@ -146,18 +146,25 @@ Exercise history (`ExerciseHistoryScreen`):
 
 - `Diary`: dashboard-kort for kalorier/macros, separate maltidskort, log meal og barcode-ingang
 - `Search`: sok/filter/chips, quick-add, recent searches
-- `Meals`: saved meals + favoritter
+- `Meals`: strukturerte seksjoner for saved meals, favorites og recent meals med rikere kort, ingredient preview og macro-visualisering
 - `Goals`: target-kort og progresjon pa kalorier/macros/vann
 
 Diary-fanen:
 
 - kalorimodulen er et dashboard-kort med stort kcal-tall, resterende kcal, arc-progress og macro-rad
-- `Breakfast`, `Lunch`, `Dinner` og `Snacks` vises som separate kort med ikon, kcal/items, prosent og tynn progress bar
+- kalorimodulen fungerer som en hero-seksjon med stor semitransparent progress-ring, animert fill og `+kcal` feedback nar kalorier oker
+- macro-raden bruker tre visuelle mini-kort for Protein, Carbs og Fat med fargekodet prosent, verdi, target og progressbar
+- `Breakfast`, `Lunch`, `Dinner` og `Snacks` vises som separate ekspanderbare kort med ikon, kcal/items, siste loggede matvare, dagskalori-progress og inline food-rader
+- maltidskortene har swipe right for quick-add av siste brukte matvare, swipe left for full add-food flow og repeat previous meal basert pa gardagens samme maltid
 - `Log meal` er primar fullbredde-CTA, fulgt av egen barcode scanner-rad
+- Nutrition-skjermene bruker felles gradientbakgrunn med subtil scroll-parallax, gradientkort uten harde borders og standardiserte CTA-knapper
 
 `FoodSearchScreen`:
 
 - sok i lokal matdatabase
+- resultatene bruker storre matvarenavn, dempet metadata og fargekodede macro-chips for Protein, Carbs og Fat
+- `+` i resultatlisten quick-adder til sist brukte maltid pa tap, mens long press apner valg av maltid og portion-input
+- smart suggestions viser ofte loggede matvarer overst med labels som `Often eaten at breakfast`, basert pa gjentatt og nylig logging
 - fallback til recent foods nar query er tom
 - rask logging til valgt maltid + dato
 - inngang til custom food og barcode
@@ -413,6 +420,16 @@ Ekstra ideer finnes i: `To be added.md`.
 
 - 2026-04-24: Workouts er oppdatert med ny Today-layout/streak-logikk, grupperte Program-templates i 2-kolonne grid, fast hoyde pa History-kalenderen med Month/Year/Multi-year, intern scroll for Year/Multi-year, Year-grid med 3 kolonner og nyeste rekke nederst, Month-sperre mot fremtid, separat nyeste-anker for Year/Multi-year, manedslabels i Multi-year, cache/prefetch for kalenderbytte og felles gronn toppfade via `AppBackground`.
 - 2026-04-24: Nutrition `Diary` er redesignet som en mer dynamisk dashboard-layout med kalorikort, arc-progress, macro-progress og separate maltidskort i Workouts-stil.
+- 2026-04-25: Nutrition UI er polert med egen parallax-gradientbakgrunn, borderless gradientkort, mykere shadows, mer vertikal spacing og felles CTA-stil.
+- 2026-04-25: Nutrition `Diary` kalorimodul er gjort om til hero med stor animert bakgrunnsring, sentrert kcal-visning og kortvarig `+kcal` feedback ved logging.
+- 2026-04-25: Nutrition `Diary` macro-seksjonen er gjort mer visuell med tre fargekodede mini-kort for Protein, Carbs og Fat.
+- 2026-04-25: Nutrition `Diary` maltidskortene er gjort ekspanderbare med siste loggede matvare, inline logged foods, fargeidentitet og dagskalori-progress per maltid.
+- 2026-04-25: Nutrition `Diary` maltidskortene har faatt native swipe-actions for quick-add/full add-flow, haptic feedback og repeat previous meal fra gardagens entries.
+- 2026-04-25: Nutrition food search-resultater er gjort mer skannbare med storre navn, roligere metadata og fargekodede macro-chips.
+- 2026-04-25: Nutrition food search `+` har faatt quick-add til sist brukte maltid, long-press for maltid/portion og haptic/visual add-feedback.
+- 2026-04-25: Nutrition Search har faatt smart suggestions for frequently logged foods med vanligste meal-slot-label basert pa diary-historikk.
+- 2026-04-25: Nutrition `Meals` er strukturert i seksjonene Saved meals, Favorites og Recent meals med tydelige headers og View all der det passer.
+- 2026-04-25: Nutrition `Meals`-kortene viser ingredient preview, tydeligere kcal-hierarki og fargekodede macro-bars/indikatorer.
 - 2026-04-24: Oppdatert app-ikon til nytt FormFuel-ikon (assets: `icon.png`, `adaptive-icon.png`, `favicon.png`) basert pa levert designfil.
 - 2026-04-24: Home hero er finjustert mot målbildet (bedre typografi/proposjoner i ring/seksjoner, topprad/streak/greeting), og macro-boksene er flyttet til scroll-innhold slik at de følger nedover med de andre kortene.
 - 2026-04-24: Home er redesignet med animert hero-header for kalorier (gradientbakgrunn, progresjonsring, makro-pills, parallax/kollaps/fade) og kompakt collapsed-state ved scroll.

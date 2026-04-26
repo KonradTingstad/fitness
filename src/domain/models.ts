@@ -194,7 +194,7 @@ export interface FoodItem {
   saturatedFatG?: number | null;
   sodiumMg?: number | null;
   barcode?: string | null;
-  sourceProvider: 'seed' | 'custom' | 'barcode' | 'search';
+  sourceProvider: 'seed' | 'custom' | 'barcode' | 'search' | 'oda_private_snapshot';
   isVerified: boolean;
   isCustom: boolean;
 }

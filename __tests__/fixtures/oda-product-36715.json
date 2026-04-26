@@ -1,0 +1,41 @@
+{
+  "id": 36715,
+  "full_name": "TINE YT proteinyoghurt Vanilje",
+  "brand": "TINE",
+  "name": "YT proteinyoghurt",
+  "name_extra": "Vanilje, 430 g",
+  "front_url": "https://oda.com/no/products/36715-tine-yt-proteinyoghurt-vanilje/",
+  "absolute_url": "/no/products/36715-tine-yt-proteinyoghurt-vanilje/",
+  "detailed_info": {
+    "country": "NO",
+    "local": [
+      {
+        "language": "nb",
+        "language_name": "Norsk (bokmal)",
+        "local_product_name": "YT proteinyoghurt",
+        "short_description": "",
+        "description_from_supplier": "Example description omitted in importer mapping.",
+        "nutrition_info_table": {
+          "title": "Naeringsinnhold pr. 100g/ml",
+          "rows": [
+            { "key": "Energi", "value": "284 kJ / 67 kcal" },
+            { "key": "Fett", "value": "1.80 g" },
+            { "key": "hvorav mettede fettsyrer", "value": "1.20 g" },
+            { "key": "Karbohydrater", "value": "3.20 g" },
+            { "key": "hvorav sukkerarter", "value": "3.10 g" },
+            { "key": "Protein", "value": "9.20 g" },
+            { "key": "Salt", "value": "0.10 g" }
+          ]
+        },
+        "contents_table": {
+          "rows": [
+            { "key": "Storrelse", "value": "430 gram" },
+            { "key": "Ingredienser", "value": "lettmelk, oligofruktose, vaniljeekstrakt" },
+            { "key": "Allergener", "value": "lettmelk, yoghurtkultur" }
+          ]
+        },
+        "hazards": null
+      }
+    ]
+  }
+}

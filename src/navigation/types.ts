@@ -8,13 +8,13 @@ export type BottomTabParamList = {
   Workouts: undefined;
   Nutrition: undefined;
   Progress: undefined;
-  Profile: undefined;
 };
 
 export type RootStackParamList = {
   Auth: undefined;
   Onboarding: undefined;
   MainTabs: NavigatorScreenParams<BottomTabParamList>;
+  ProfileSettings: undefined;
   LiveWorkout: { sessionId: string };
   WorkoutSummary: { sessionId: string };
   ExerciseHistory: { exerciseId: string };

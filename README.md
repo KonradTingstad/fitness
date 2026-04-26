@@ -381,6 +381,7 @@ open ios/FormFuel.xcodeproj
 - `npm run android` - bygg/kjor Android
 - `npm run web` - web preview
 - `npm run prebuild:ios` - generer iOS native prosjekt
+- `npm run import:oda-foods` - manuell Oda private snapshot-import til Supabase
 - `npm run typecheck` - TypeScript noEmit
 - `npm run test` - Jest tester
 
@@ -392,6 +393,7 @@ Tester finnes i:
 
 - `__tests__/workout.test.ts`
 - `__tests__/nutrition.test.ts`
+- `__tests__/oda-importer.test.ts`
 
 Disse dekker blant annet:
 
@@ -400,6 +402,7 @@ Disse dekker blant annet:
 - PR-detektering
 - summering av nutrition totals
 - adherence/remaining macros
+- Oda sitemap/API parsing, nutrition-normalisering og upsert-payload for importer
 
 ---
 
@@ -436,3 +439,4 @@ Ekstra ideer finnes i: `To be added.md`.
 - 2026-04-24: Progress `Overview` er gjort bruker-tilpassbar (legg til/fjern stats), med ny `Edit overview` bottom sheet og persistering i `progress_overview_modules`.
 - 2026-04-24: Progress er refaktorert til datadrevet widget-dashboard med `Add statistic`-flyt (kategori -> velg metrikk -> konfigurer -> lagre), nye progress-komponenter og persistens i `progress_widgets`.
 - 2026-04-24: Opprettet full `README.md` med komplett appoversikt, funksjonsstatus, arkitektur, setup, sync-beskrivelse, teststatus og vedlikeholdsregel for videre oppdateringer.
+- 2026-04-25: La til manuell one-time Oda private snapshot-importer (`scripts/import-oda-foods.js`), Supabase migrasjon for utvidet `food_items`-schema/soke-funksjon, tester for importer-logikk og dokumentasjon i `docs/ODA_PRIVATE_IMPORT.md`.

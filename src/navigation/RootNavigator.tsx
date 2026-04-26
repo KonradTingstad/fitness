@@ -3,7 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Dumbbell, Home, LineChart, Settings, Soup } from 'lucide-react-native';
+import { Dumbbell, Home, LineChart, Soup } from 'lucide-react-native';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -85,6 +85,7 @@ function MainTabs() {
           shadowOffset: { width: 0, height: 6 },
         },
         tabBarItemStyle: {
+          flex: 1,
           paddingVertical: 0,
         },
         tabBarLabelStyle: {
@@ -96,8 +97,7 @@ function MainTabs() {
           if (route.name === 'Home') return <Home size={iconSize} color={color} />;
           if (route.name === 'Workouts') return <Dumbbell size={iconSize} color={color} />;
           if (route.name === 'Nutrition') return <Soup size={iconSize} color={color} />;
-          if (route.name === 'Progress') return <LineChart size={iconSize} color={color} />;
-          return <Settings size={iconSize} color={color} />;
+          return <LineChart size={iconSize} color={color} />;
         },
       })}
     >
@@ -105,7 +105,6 @@ function MainTabs() {
       <Tabs.Screen name="Workouts" component={WorkoutDashboardScreen} />
       <Tabs.Screen name="Nutrition" component={NutritionDiaryScreen} />
       <Tabs.Screen name="Progress" component={ProgressScreen} />
-      <Tabs.Screen name="Profile" component={ProfileScreen} />
     </Tabs.Navigator>
   );
 }
@@ -164,6 +163,7 @@ export function RootNavigator() {
             <Stack.Screen name="FoodSearch" component={FoodSearchScreen} options={{ title: 'Add Food' }} />
             <Stack.Screen name="CustomFood" component={CustomFoodScreen} options={{ title: 'Custom Food' }} />
             <Stack.Screen name="BarcodeScanner" component={BarcodeScannerScreen} options={{ title: 'Scan Barcode' }} />
+            <Stack.Screen name="ProfileSettings" component={ProfileScreen} options={{ title: 'Profile & Settings' }} />
             <Stack.Screen name="ProgressStatSelection" component={ProgressStatSelectionScreen} options={{ title: 'Select statistic' }} />
             <Stack.Screen name="ProgressStatConfig" component={ProgressStatConfigScreen} options={{ title: 'Configure statistic' }} />
           </>

@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Clock, Droplets, Dumbbell, Utensils, Wheat } from 'lucide-react-native';
+import { Clock, Droplets, Dumbbell, User, Utensils, Wheat } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Animated, {
@@ -382,6 +382,26 @@ export function HomeScreen() {
           </Animated.View>
         </Animated.View>
 
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => navigation.navigate('ProfileSettings')}
+          style={({ pressed }) => [
+            styles.profileButton,
+            {
+              top: insets.top + 10,
+              opacity: pressed ? 0.84 : 1,
+              borderColor: 'rgba(255,255,255,0.2)',
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={['rgba(255,255,255,0.22)', 'rgba(255,255,255,0.08)', 'rgba(6,10,14,0.44)']}
+            locations={[0, 0.42, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+          <User size={17} color="#ECF7EF" strokeWidth={2.4} />
+        </Pressable>
+
         <Animated.ScrollView
           contentContainerStyle={[
             styles.scrollContent,
@@ -542,6 +562,24 @@ export function HomeScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+  },
+  profileButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(10,16,22,0.46)',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    elevation: 5,
+    height: 42,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    width: 42,
+    zIndex: 5,
   },
   heroLayer: {
     left: 0,

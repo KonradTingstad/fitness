@@ -19,6 +19,16 @@ type ProfileRow = {
   version: number;
 };
 
+type UserRow = {
+  id: string;
+  display_name: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  sync_status: 'synced' | 'pending' | 'failed';
+  version: number;
+};
+
 type SettingsRow = {
   id: string;
   user_id: string;
@@ -66,6 +76,7 @@ type GoalsRow = {
 };
 
 export interface ProfileBundle {
+  displayName?: string | null;
   profile: UserProfile;
   settings: UserSettings;
   units: UnitPreferences;
@@ -74,16 +85,18 @@ export interface ProfileBundle {
 
 export async function getProfileBundle(userId = DEMO_USER_ID): Promise<ProfileBundle> {
   const db = await getDatabase();
-  const [profile, settings, units, goals] = await Promise.all([
+  const [user, profile, settings, units, goals] = await Promise.all([
+    db.getFirstAsync<UserRow>('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [userId]),
     db.getFirstAsync<ProfileRow>('SELECT * FROM user_profiles WHERE user_id = ? AND deleted_at IS NULL', [userId]),
     db.getFirstAsync<SettingsRow>('SELECT * FROM user_settings WHERE user_id = ? AND deleted_at IS NULL', [userId]),
     db.getFirstAsync<UnitsRow>('SELECT * FROM unit_preferences WHERE user_id = ? AND deleted_at IS NULL', [userId]),
     db.getFirstAsync<GoalsRow>('SELECT * FROM goal_settings WHERE user_id = ? AND deleted_at IS NULL', [userId]),
   ]);
-  if (!profile || !settings || !units || !goals) {
+  if (!user || !profile || !settings || !units || !goals) {
     throw new Error('Profile is not initialized');
   }
   return {
+    displayName: user.display_name,
     profile: mapProfile(profile),
     settings: mapSettings(settings),
     units: mapUnits(units),
@@ -111,7 +124,7 @@ export async function completeOnboarding(input: OnboardingForm, userId = DEMO_US
 
 export async function updateGoals(
   patch: Partial<
-    Pick<GoalSettings, 'goal' | 'calorieTarget' | 'proteinTargetG' | 'carbTargetG' | 'fatTargetG' | 'waterTargetMl' | 'workoutsPerWeekTarget'>
+    Pick<GoalSettings, 'goal' | 'activityLevel' | 'calorieTarget' | 'proteinTargetG' | 'carbTargetG' | 'fatTargetG' | 'waterTargetMl' | 'workoutsPerWeekTarget'>
   >,
   userId = DEMO_USER_ID,
 ): Promise<void> {
@@ -119,6 +132,7 @@ export async function updateGoals(
   const current = (await db.getFirstAsync<GoalsRow>('SELECT * FROM goal_settings WHERE user_id = ?', [userId]))!;
   const next = {
     goal: patch.goal ?? current.goal,
+    activityLevel: patch.activityLevel ?? current.activity_level,
     calorieTarget: patch.calorieTarget ?? current.calorie_target,
     proteinTargetG: patch.proteinTargetG ?? current.protein_target_g,
     carbTargetG: patch.carbTargetG ?? current.carb_target_g,
@@ -129,11 +143,12 @@ export async function updateGoals(
   const now = new Date().toISOString();
   await db.runAsync(
     `UPDATE goal_settings
-     SET goal = ?, calorie_target = ?, protein_target_g = ?, carb_target_g = ?, fat_target_g = ?, water_target_ml = ?, workouts_per_week_target = ?,
+     SET goal = ?, activity_level = ?, calorie_target = ?, protein_target_g = ?, carb_target_g = ?, fat_target_g = ?, water_target_ml = ?, workouts_per_week_target = ?,
          updated_at = ?, sync_status = 'pending', version = version + 1
      WHERE user_id = ?`,
     [
       next.goal,
+      next.activityLevel,
       next.calorieTarget,
       next.proteinTargetG,
       next.carbTargetG,
@@ -145,6 +160,75 @@ export async function updateGoals(
     ],
   );
   await enqueueSync('goal_settings', userId, 'update', next);
+}
+
+export async function updateProfileSettings(
+  patch: Partial<{ firstName: string; lastName: string; heightCm: number; currentWeightKg: number }>,
+  userId = DEMO_USER_ID,
+): Promise<void> {
+  const db = await getDatabase();
+  const [currentUser, currentProfile] = await Promise.all([
+    db.getFirstAsync<UserRow>('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [userId]),
+    db.getFirstAsync<ProfileRow>('SELECT * FROM user_profiles WHERE user_id = ? AND deleted_at IS NULL', [userId]),
+  ]);
+
+  if (!currentUser || !currentProfile) {
+    throw new Error('Profile is not initialized');
+  }
+
+  const [existingFirstName, ...rest] = (currentUser.display_name ?? '').trim().split(/\s+/).filter(Boolean);
+  const existingLastName = rest.join(' ');
+
+  const firstName = patch.firstName === undefined ? existingFirstName ?? '' : patch.firstName.trim();
+  const lastName = patch.lastName === undefined ? existingLastName : patch.lastName.trim();
+  const displayName = `${firstName} ${lastName}`.trim();
+  const heightCm = patch.heightCm ?? currentProfile.height_cm;
+  const currentWeightKg = patch.currentWeightKg ?? currentProfile.current_weight_kg;
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `UPDATE users
+     SET display_name = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND deleted_at IS NULL`,
+    [displayName.length ? displayName : null, now, userId],
+  );
+  await db.runAsync(
+    `UPDATE user_profiles
+     SET height_cm = ?, current_weight_kg = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE user_id = ? AND deleted_at IS NULL`,
+    [heightCm, currentWeightKg, now, userId],
+  );
+
+  await enqueueSync('user', userId, 'update', { displayName: displayName.length ? displayName : null });
+  await enqueueSync('user_profile', userId, 'update', { heightCm, currentWeightKg });
+}
+
+export async function updateUnitPreferences(
+  patch: Partial<Pick<UnitPreferences, 'bodyWeightUnit' | 'loadUnit' | 'volumeUnit'>>,
+  userId = DEMO_USER_ID,
+): Promise<void> {
+  const db = await getDatabase();
+  const current = await db.getFirstAsync<UnitsRow>('SELECT * FROM unit_preferences WHERE user_id = ? AND deleted_at IS NULL', [userId]);
+  if (!current) {
+    throw new Error('Unit preferences are not initialized');
+  }
+
+  const next = {
+    bodyWeightUnit: patch.bodyWeightUnit ?? current.body_weight_unit,
+    loadUnit: patch.loadUnit ?? current.load_unit,
+    volumeUnit: patch.volumeUnit ?? current.volume_unit,
+    distanceUnit: current.distance_unit,
+    energyUnit: current.energy_unit,
+  };
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE unit_preferences
+     SET body_weight_unit = ?, load_unit = ?, distance_unit = ?, volume_unit = ?, energy_unit = ?,
+         updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE user_id = ? AND deleted_at IS NULL`,
+    [next.bodyWeightUnit, next.loadUnit, next.distanceUnit, next.volumeUnit, next.energyUnit, now, userId],
+  );
+  await enqueueSync('unit_preferences', userId, 'update', next);
 }
 
 export async function getMealsPerDayTarget(userId = DEMO_USER_ID): Promise<number> {

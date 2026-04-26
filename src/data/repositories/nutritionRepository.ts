@@ -1,6 +1,7 @@
 import { getDatabase } from '@/data/db/database';
 import { createId, DEMO_USER_ID } from '@/data/db/ids';
 import { enqueueSync } from '@/data/sync/syncQueue';
+import { isSupabaseConfigured, supabase } from '@/data/sync/supabase';
 import { shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
 import { calculateCalorieGoalStreak, sumDiaryEntries } from '@/domain/calculations/nutrition';
 import {
@@ -33,9 +34,30 @@ type FoodRow = {
   saturated_fat_g: number | null;
   sodium_mg: number | null;
   barcode: string | null;
-  source_provider: FoodItem['sourceProvider'];
-  is_verified: number;
-  is_custom: number;
+  source_provider: FoodItem['sourceProvider'] | string;
+  is_verified: number | boolean;
+  is_custom: number | boolean;
+};
+
+type SupabaseFoodSearchRow = {
+  id: string;
+  name: string;
+  brand_name: string | null;
+  serving_size: number;
+  serving_unit: string;
+  grams_per_serving: number;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  fiber_g: number | null;
+  sugar_g: number | null;
+  saturated_fat_g: number | null;
+  sodium_mg: number | null;
+  barcode: string | null;
+  source_provider: string | null;
+  is_verified: boolean;
+  is_custom: boolean;
 };
 
 type DiaryEntryRow = {
@@ -165,7 +187,7 @@ export async function getCalorieGoalStreak(endLocalDate = toLocalDateKey(), user
 export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Promise<FoodItem[]> {
   const db = await getDatabase();
   const search = `%${query.trim()}%`;
-  const rows = await db.getAllAsync<FoodRow>(
+  const localRows = await db.getAllAsync<FoodRow>(
     `SELECT * FROM food_items
      WHERE deleted_at IS NULL
        AND (user_id IS NULL OR user_id = ?)
@@ -174,7 +196,15 @@ export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Pro
      LIMIT 50`,
     [userId, search, search, search, search],
   );
-  return rows.map(mapFood);
+
+  const localFoods = localRows.map(mapFood);
+  const remoteFoods = await searchSupabaseFoodItems(query);
+
+  if (!remoteFoods.length) {
+    return localFoods;
+  }
+
+  return mergeFoodSearchResults(localFoods, remoteFoods);
 }
 
 export async function getRecentFoods(userId = DEMO_USER_ID): Promise<FoodItem[]> {
@@ -617,6 +647,121 @@ async function getOrCreateDiaryDay(localDate: string, userId: string): Promise<s
   return id;
 }
 
+async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const trimmed = query.trim();
+  if (!trimmed.length) {
+    return [];
+  }
+
+  try {
+    const rpcResponse = await supabase.rpc('search_food_items_snapshot', {
+      search_query: trimmed,
+      max_results: 50,
+    });
+
+    if (!rpcResponse.error && Array.isArray(rpcResponse.data)) {
+      return rpcResponse.data.map((row) =>
+        mapFood({
+          id: row.id,
+          user_id: null,
+          brand_id: null,
+          brand_name: row.brand_name,
+          name: row.name,
+          serving_size: row.serving_size,
+          serving_unit: row.serving_unit,
+          grams_per_serving: row.grams_per_serving,
+          calories: row.calories,
+          protein_g: row.protein_g,
+          carbs_g: row.carbs_g,
+          fat_g: row.fat_g,
+          fiber_g: row.fiber_g,
+          sugar_g: row.sugar_g,
+          saturated_fat_g: row.saturated_fat_g,
+          sodium_mg: row.sodium_mg,
+          barcode: row.barcode,
+          source_provider: row.source_provider ?? 'search',
+          is_verified: row.is_verified,
+          is_custom: row.is_custom,
+        }),
+      );
+    }
+
+    const likeSearch = `%${trimmed}%`;
+    const fallback = await supabase
+      .from('food_items')
+      .select(
+        'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom',
+      )
+      .is('deleted_at', null)
+      .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch},barcode.ilike.${likeSearch}`)
+      .order('is_custom', { ascending: false })
+      .order('is_verified', { ascending: false })
+      .order('name', { ascending: true })
+      .limit(50);
+
+    if (fallback.error || !Array.isArray(fallback.data)) {
+      return [];
+    }
+
+    return fallback.data.map((row: SupabaseFoodSearchRow) =>
+      mapFood({
+        id: row.id,
+        user_id: null,
+        brand_id: null,
+        brand_name: row.brand_name,
+        name: row.name,
+        serving_size: row.serving_size,
+        serving_unit: row.serving_unit,
+        grams_per_serving: row.grams_per_serving,
+        calories: row.calories,
+        protein_g: row.protein_g,
+        carbs_g: row.carbs_g,
+        fat_g: row.fat_g,
+        fiber_g: row.fiber_g,
+        sugar_g: row.sugar_g,
+        saturated_fat_g: row.saturated_fat_g,
+        sodium_mg: row.sodium_mg,
+        barcode: row.barcode,
+        source_provider: row.source_provider ?? 'search',
+        is_verified: row.is_verified,
+        is_custom: row.is_custom,
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function mergeFoodSearchResults(localFoods: FoodItem[], remoteFoods: FoodItem[]): FoodItem[] {
+  const byKey = new Map<string, FoodItem>();
+
+  for (const food of [...localFoods, ...remoteFoods]) {
+    const key = `${food.id}:${food.barcode ?? ''}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, food);
+    }
+  }
+
+  return Array.from(byKey.values()).slice(0, 50);
+}
+
+function normalizeFoodSourceProvider(value: string): FoodItem['sourceProvider'] {
+  if (
+    value === 'seed' ||
+    value === 'custom' ||
+    value === 'barcode' ||
+    value === 'search' ||
+    value === 'oda_private_snapshot'
+  ) {
+    return value;
+  }
+  return 'search';
+}
+
 function mapFood(row: FoodRow): FoodItem {
   return {
     id: row.id,
@@ -636,7 +781,7 @@ function mapFood(row: FoodRow): FoodItem {
     saturatedFatG: row.saturated_fat_g,
     sodiumMg: row.sodium_mg,
     barcode: row.barcode,
-    sourceProvider: row.source_provider,
+    sourceProvider: normalizeFoodSourceProvider(String(row.source_provider ?? 'search')),
     isVerified: Boolean(row.is_verified),
     isCustom: Boolean(row.is_custom),
   };

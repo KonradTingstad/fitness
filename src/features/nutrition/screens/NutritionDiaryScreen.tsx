@@ -1564,7 +1564,7 @@ export function NutritionDiaryScreen() {
 
   if (diary.isLoading || profile.isLoading || nutritionLibrary.isLoading || recentFoods.isLoading || mealsPerDayTarget.isLoading) {
     return (
-      <NutritionScreen>
+      <NutritionScreen resetScrollOnBlur>
         <LoadingState label="Loading nutrition" />
       </NutritionScreen>
     );
@@ -1572,7 +1572,7 @@ export function NutritionDiaryScreen() {
 
   if (!diaryData || !goals) {
     return (
-      <NutritionScreen>
+      <NutritionScreen resetScrollOnBlur>
         <EmptyState icon={Target} title="Nutrition data unavailable" body="Try reloading once profile and diary data are ready." />
       </NutritionScreen>
     );
@@ -2113,7 +2113,7 @@ export function NutritionDiaryScreen() {
   };
 
   return (
-    <NutritionScreen>
+    <NutritionScreen resetScrollOnBlur>
       <View style={styles.header}>
         <View>
           <AppText variant="title">Nutrition</AppText>

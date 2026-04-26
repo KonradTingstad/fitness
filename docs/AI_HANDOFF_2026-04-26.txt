@@ -1,0 +1,80 @@
+FuelForm AI Handoff (2026-04-26)
+================================
+
+Formål
+------
+Kompakt status for neste AI-modell, oppdatert etter at Supabase CLI-token ble satt og migrasjoner faktisk ble kjørt.
+
+Prosjekt
+--------
+- Repo: /Users/konrad/Documents/Playground/Fitness
+- App: FuelForm (Expo/React Native)
+- Supabase project ref: ydbllttqkycrayqdejqw
+
+Hva som er gjort (verifisert)
+-----------------------------
+1) Supabase CLI token ble testet og fungerer.
+- `npx supabase projects list` returnerer riktig prosjekt.
+
+2) Remote migrasjoner er kjørt.
+- `20260425_oda_private_snapshot_foods.sql` ble pushet.
+- Oppfølgingsmigrasjoner ble lagt til og pushet:
+  - `202604261000_oda_source_product_unique_fix.sql`
+  - `202604261001_backfill_oda_source_product_id.sql`
+
+3) Migrations local vs remote er synkronisert.
+- `npx supabase migration list` viser match på:
+  - 20260422
+  - 20260425
+  - 202604261000
+  - 202604261001
+
+4) Importer kjører nå i extended schema mode uten DB-feil.
+- Kommando: `npm run import:oda-foods -- --limit=20`
+- Viktig output:
+  - `Detected food_items schema mode: extended ...`
+  - `updated: 20`
+  - `failed database inserts: 0`
+
+5) Data verifisert i DB etter migrasjon/backfill.
+- `source_provider='oda_private_snapshot'` count: 20
+- med `source_product_id is not null`: 20
+- Eksempelrader viser `source_product_id`, `calories_per_100`, `protein_per_100` utfylt.
+
+Kodeendringer i arbeidskatalog nå
+---------------------------------
+Modified:
+- /Users/konrad/Documents/Playground/Fitness/src/data/repositories/nutritionRepository.ts
+- /Users/konrad/Documents/Playground/Fitness/supabase/migrations/20260425_oda_private_snapshot_foods.sql
+
+Untracked:
+- /Users/konrad/Documents/Playground/Fitness/docs/AI_HANDOFF_2026-04-26.txt
+- /Users/konrad/Documents/Playground/Fitness/supabase/migrations/202604261000_oda_source_product_unique_fix.sql
+- /Users/konrad/Documents/Playground/Fitness/supabase/migrations/202604261001_backfill_oda_source_product_id.sql
+
+Hvorfor 2 ekstra migrasjoner ble nødvendig
+------------------------------------------
+- `ON CONFLICT(source_provider, source_product_id)` feilet først fordi unique index var partial.
+- Unique-fix migrasjon lager full unique index på `(source_provider, source_product_id)`.
+- Backfill-migrasjon setter `source_product_id` for legacy-importerte `oda_*` rader for å unngå PK-kollisjon.
+
+Viktige kommandoer for neste modell
+-----------------------------------
+- Fortsette full import:
+  - `npm run import:oda-foods -- --all --resume`
+- Liten verifisering:
+  - `npm run import:oda-foods -- --limit=20`
+- Se migrasjonsstatus:
+  - `npx supabase migration list`
+
+Kjent pre-eksisterende prosjektfeil
+-----------------------------------
+- Typecheck:
+  - `tsconfig.json(5,27): TS5103 Invalid value for '--ignoreDeprecations'`
+- Denne feilen er ikke introdusert av importer-endringene.
+
+Sikkerhetsnotat
+---------------
+- Supabase tokens/keys må ikke committes.
+- Bruker la inn ny CLI token i chat for drift i denne sesjonen.
+

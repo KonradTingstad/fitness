@@ -5,6 +5,9 @@ create extension if not exists unaccent;
 
 alter table public.food_items add column if not exists variant text;
 alter table public.food_items add column if not exists package_size text;
+alter table public.food_items add column if not exists barcode text;
+alter table public.food_items add column if not exists sugar_g double precision;
+alter table public.food_items add column if not exists saturated_fat_g double precision;
 alter table public.food_items add column if not exists source_product_id text;
 alter table public.food_items add column if not exists source_url text;
 alter table public.food_items add column if not exists api_url text;

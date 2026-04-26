@@ -1,7 +1,8 @@
-import { ComponentType, PropsWithChildren } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { ComponentType, PropsWithChildren, useCallback, useRef } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LucideProps } from 'lucide-react-native';
-import { Pressable, ScrollViewProps, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Pressable, ScrollView, ScrollViewProps, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -19,6 +20,7 @@ type NutritionButtonVariant = 'primary' | 'soft' | 'ghost';
 interface NutritionScreenProps extends PropsWithChildren {
   contentContainerStyle?: StyleProp<ViewStyle>;
   scrollProps?: Omit<ScrollViewProps, 'contentContainerStyle' | 'onScroll' | 'scrollEventThrottle'>;
+  resetScrollOnBlur?: boolean;
 }
 
 interface NutritionCardProps extends PropsWithChildren {
@@ -66,14 +68,28 @@ function cardOuterStyle(style?: StyleProp<ViewStyle>): ViewStyle {
   };
 }
 
-export function NutritionScreen({ children, contentContainerStyle, scrollProps }: NutritionScreenProps) {
+export function NutritionScreen({ children, contentContainerStyle, scrollProps, resetScrollOnBlur = false }: NutritionScreenProps) {
   const theme = useAppTheme();
+  const scrollViewRef = useRef<ScrollView>(null);
   const scrollY = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
     },
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (!resetScrollOnBlur) {
+          return;
+        }
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+        scrollY.value = 0;
+      };
+    }, [resetScrollOnBlur, scrollY]),
+  );
+
   const nearLayerStyle = useAnimatedStyle(() => ({
     opacity: interpolate(scrollY.value, [0, 260], [1, 0.82], Extrapolation.CLAMP),
     transform: [{ translateY: interpolate(scrollY.value, [0, 320], [0, -34], Extrapolation.CLAMP) }],
@@ -113,6 +129,7 @@ export function NutritionScreen({ children, contentContainerStyle, scrollProps }
 
       <SafeAreaView style={styles.safeArea}>
         <Animated.ScrollView
+          ref={scrollViewRef}
           {...scrollProps}
           contentContainerStyle={[styles.content, contentContainerStyle]}
           keyboardShouldPersistTaps="handled"

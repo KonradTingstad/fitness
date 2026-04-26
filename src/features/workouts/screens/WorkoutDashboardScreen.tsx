@@ -1533,7 +1533,7 @@ export function WorkoutDashboardScreen() {
   );
 
   return (
-    <Screen>
+    <Screen resetScrollOnBlur>
       <View style={styles.header}>
         <View>
           <AppText variant="title">Workouts</AppText>

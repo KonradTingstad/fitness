@@ -43,18 +43,18 @@ type SupabaseFoodSearchRow = {
   id: string;
   name: string;
   brand_name: string | null;
-  serving_size: number;
-  serving_unit: string;
-  grams_per_serving: number;
-  calories: number;
-  protein_g: number;
-  carbs_g: number;
-  fat_g: number;
+  serving_size: number | null;
+  serving_unit: string | null;
+  grams_per_serving: number | null;
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
   fiber_g: number | null;
-  sugar_g: number | null;
-  saturated_fat_g: number | null;
+  sugar_g?: number | null;
+  saturated_fat_g?: number | null;
   sodium_mg: number | null;
-  barcode: string | null;
+  barcode?: string | null;
   source_provider: string | null;
   is_verified: boolean;
   is_custom: boolean;
@@ -108,6 +108,18 @@ export interface FoodSuggestion {
 }
 
 const CALORIE_STREAK_LOOKBACK_DAYS = 90;
+
+const SUPABASE_SEARCH_SELECT_EXTENDED =
+  'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom';
+const SUPABASE_SEARCH_SELECT_LEGACY =
+  'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg, source_provider, is_verified, is_custom';
+
+function isSupabaseMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === '42703') return true;
+  const message = String(error.message ?? '');
+  return message.includes('column') && message.includes('does not exist');
+}
 
 export async function getDiary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<DiarySummary> {
   const db = await getDatabase();
@@ -691,17 +703,27 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
     }
 
     const likeSearch = `%${trimmed}%`;
-    const fallback = await supabase
+    let fallback = await supabase
       .from('food_items')
-      .select(
-        'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom',
-      )
+      .select(SUPABASE_SEARCH_SELECT_EXTENDED)
       .is('deleted_at', null)
       .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch},barcode.ilike.${likeSearch}`)
       .order('is_custom', { ascending: false })
       .order('is_verified', { ascending: false })
       .order('name', { ascending: true })
       .limit(50);
+
+    if (isSupabaseMissingColumnError(fallback.error)) {
+      fallback = await supabase
+        .from('food_items')
+        .select(SUPABASE_SEARCH_SELECT_LEGACY)
+        .is('deleted_at', null)
+        .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch}`)
+        .order('is_custom', { ascending: false })
+        .order('is_verified', { ascending: false })
+        .order('name', { ascending: true })
+        .limit(50);
+    }
 
     if (fallback.error || !Array.isArray(fallback.data)) {
       return [];
@@ -722,10 +744,10 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
         carbs_g: row.carbs_g,
         fat_g: row.fat_g,
         fiber_g: row.fiber_g,
-        sugar_g: row.sugar_g,
-        saturated_fat_g: row.saturated_fat_g,
+        sugar_g: row.sugar_g ?? null,
+        saturated_fat_g: row.saturated_fat_g ?? null,
         sodium_mg: row.sodium_mg,
-        barcode: row.barcode,
+        barcode: row.barcode ?? null,
         source_provider: row.source_provider ?? 'search',
         is_verified: row.is_verified,
         is_custom: row.is_custom,

@@ -129,7 +129,7 @@ export function ProgressScreen() {
 
   return (
     <>
-      <Screen>
+      <Screen resetScrollOnBlur>
         <View style={styles.headerRow}>
           <View style={styles.headerCopy}>
             <AppText variant="title">Progress</AppText>

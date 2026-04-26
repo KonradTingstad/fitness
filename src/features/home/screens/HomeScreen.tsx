@@ -1,7 +1,8 @@
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Clock, Droplets, Dumbbell, User, Utensils, Wheat } from 'lucide-react-native';
+import { type ElementRef, useCallback, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Animated, {
@@ -126,7 +127,17 @@ export function HomeScreen() {
   const queryClient = useQueryClient();
   const dashboard = useDashboard();
   const routines = useRoutines();
+  const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
   const scrollY = useSharedValue(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+        scrollY.value = 0;
+      };
+    }, [scrollY]),
+  );
 
   const startWorkout = useMutation({
     mutationFn: async (routineId?: string) => (routineId ? startWorkoutFromRoutine(routineId) : startEmptyWorkout()),
@@ -403,6 +414,7 @@ export function HomeScreen() {
         </Pressable>
 
         <Animated.ScrollView
+          ref={scrollViewRef}
           contentContainerStyle={[
             styles.scrollContent,
             {

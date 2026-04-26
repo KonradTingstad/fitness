@@ -67,6 +67,12 @@ type DiaryEntryRow = {
   meal_slot: MealSlot;
   food_item_id: string;
   servings: number;
+  quantity_type: 'portion' | 'gram' | null;
+  total_grams: number | null;
+  total_calories: number | null;
+  total_protein_g: number | null;
+  total_carbs_g: number | null;
+  total_fat_g: number | null;
   logged_at: string;
   food_name_snapshot: string;
   calories_snapshot: number;
@@ -211,6 +217,13 @@ export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Pro
 
   const localFoods = localRows.map(mapFood);
   const remoteFoods = await searchSupabaseFoodItems(query);
+  if (remoteFoods.length) {
+    try {
+      await cacheFoodItemsInLocalDb(remoteFoods);
+    } catch {
+      // Remote search should still work even if local cache write fails.
+    }
+  }
 
   if (!remoteFoods.length) {
     return localFoods;
@@ -274,28 +287,63 @@ export async function addDiaryEntry(input: {
   mealSlot: MealSlot;
   foodItemId: string;
   servings: number;
+  food?: FoodItem;
+  quantityType?: 'portion' | 'gram';
+  totalGrams?: number;
+  totalCalories?: number;
+  totalProteinG?: number;
+  totalCarbsG?: number;
+  totalFatG?: number;
   userId?: string;
 }): Promise<string> {
   const db = await getDatabase();
   const userId = input.userId ?? DEMO_USER_ID;
   const dayId = await getOrCreateDiaryDay(input.localDate, userId);
-  const food = await db.getFirstAsync<FoodRow>('SELECT * FROM food_items WHERE id = ?', [input.foodItemId]);
+  let food = await db.getFirstAsync<FoodRow>('SELECT * FROM food_items WHERE id = ?', [input.foodItemId]);
+  if (!food && input.food) {
+    await cacheFoodItemsInLocalDb([input.food]);
+    food = await db.getFirstAsync<FoodRow>('SELECT * FROM food_items WHERE id = ?', [input.foodItemId]);
+  }
   if (!food) {
     throw new Error('Food not found');
   }
+  if (!Number.isFinite(input.servings) || input.servings <= 0) {
+    throw new Error('Servings must be greater than zero.');
+  }
+
+  const servings = input.servings;
+  const gramsPerServing = Number.isFinite(food.grams_per_serving) && food.grams_per_serving > 0 ? food.grams_per_serving : 100;
+  const totalGrams = Number.isFinite(input.totalGrams) && (input.totalGrams as number) > 0 ? (input.totalGrams as number) : servings * gramsPerServing;
+  const totalCalories =
+    Number.isFinite(input.totalCalories) && (input.totalCalories as number) >= 0 ? (input.totalCalories as number) : food.calories * servings;
+  const totalProteinG =
+    Number.isFinite(input.totalProteinG) && (input.totalProteinG as number) >= 0
+      ? (input.totalProteinG as number)
+      : food.protein_g * servings;
+  const totalCarbsG =
+    Number.isFinite(input.totalCarbsG) && (input.totalCarbsG as number) >= 0 ? (input.totalCarbsG as number) : food.carbs_g * servings;
+  const totalFatG =
+    Number.isFinite(input.totalFatG) && (input.totalFatG as number) >= 0 ? (input.totalFatG as number) : food.fat_g * servings;
+
   const id = createId('entry');
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO diary_entries
-    (id, user_id, diary_day_id, meal_slot, food_item_id, servings, logged_at, food_name_snapshot, calories_snapshot, protein_g_snapshot, carbs_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot, created_at, updated_at, deleted_at, sync_status, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, user_id, diary_day_id, meal_slot, food_item_id, servings, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, logged_at, food_name_snapshot, calories_snapshot, protein_g_snapshot, carbs_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       userId,
       dayId,
       input.mealSlot,
       input.foodItemId,
-      input.servings,
+      servings,
+      input.quantityType ?? 'portion',
+      totalGrams,
+      totalCalories,
+      totalProteinG,
+      totalCarbsG,
+      totalFatG,
       now,
       food.name,
       food.calories,
@@ -311,7 +359,18 @@ export async function addDiaryEntry(input: {
       1,
     ],
   );
-  await enqueueSync('diary_entry', id, 'insert', input);
+  await enqueueSync('diary_entry', id, 'insert', {
+    localDate: input.localDate,
+    mealSlot: input.mealSlot,
+    foodItemId: input.foodItemId,
+    servings,
+    quantityType: input.quantityType ?? 'portion',
+    totalGrams,
+    totalCalories,
+    totalProteinG,
+    totalCarbsG,
+    totalFatG,
+  });
   return id;
 }
 
@@ -676,34 +735,14 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
     });
 
     if (!rpcResponse.error && Array.isArray(rpcResponse.data)) {
-      return rpcResponse.data.map((row) =>
-        mapFood({
-          id: row.id,
-          user_id: null,
-          brand_id: null,
-          brand_name: row.brand_name,
-          name: row.name,
-          serving_size: row.serving_size,
-          serving_unit: row.serving_unit,
-          grams_per_serving: row.grams_per_serving,
-          calories: row.calories,
-          protein_g: row.protein_g,
-          carbs_g: row.carbs_g,
-          fat_g: row.fat_g,
-          fiber_g: row.fiber_g,
-          sugar_g: row.sugar_g,
-          saturated_fat_g: row.saturated_fat_g,
-          sodium_mg: row.sodium_mg,
-          barcode: row.barcode,
-          source_provider: row.source_provider ?? 'search',
-          is_verified: row.is_verified,
-          is_custom: row.is_custom,
-        }),
-      );
+      return rpcResponse.data.map(mapSupabaseSearchFood);
     }
 
     const likeSearch = `%${trimmed}%`;
-    let fallback = await supabase
+    let fallback: {
+      data: SupabaseFoodSearchRow[] | null;
+      error: { code?: string; message?: string } | null;
+    } = await supabase
       .from('food_items')
       .select(SUPABASE_SEARCH_SELECT_EXTENDED)
       .is('deleted_at', null)
@@ -729,32 +768,84 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
       return [];
     }
 
-    return fallback.data.map((row: SupabaseFoodSearchRow) =>
-      mapFood({
-        id: row.id,
-        user_id: null,
-        brand_id: null,
-        brand_name: row.brand_name,
-        name: row.name,
-        serving_size: row.serving_size,
-        serving_unit: row.serving_unit,
-        grams_per_serving: row.grams_per_serving,
-        calories: row.calories,
-        protein_g: row.protein_g,
-        carbs_g: row.carbs_g,
-        fat_g: row.fat_g,
-        fiber_g: row.fiber_g,
-        sugar_g: row.sugar_g ?? null,
-        saturated_fat_g: row.saturated_fat_g ?? null,
-        sodium_mg: row.sodium_mg,
-        barcode: row.barcode ?? null,
-        source_provider: row.source_provider ?? 'search',
-        is_verified: row.is_verified,
-        is_custom: row.is_custom,
-      }),
-    );
+    return fallback.data.map(mapSupabaseSearchFood);
   } catch {
     return [];
+  }
+}
+
+async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
+  if (!foods.length) {
+    return;
+  }
+
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+
+  for (const food of foods) {
+    const servingSize = Number.isFinite(food.servingSize) && food.servingSize > 0 ? food.servingSize : 100;
+    const servingUnit = food.servingUnit?.trim() ? food.servingUnit : 'g';
+    const gramsPerServing = Number.isFinite(food.gramsPerServing) && food.gramsPerServing > 0 ? food.gramsPerServing : 100;
+    const calories = Number.isFinite(food.calories) ? food.calories : 0;
+    const proteinG = Number.isFinite(food.proteinG) ? food.proteinG : 0;
+    const carbsG = Number.isFinite(food.carbsG) ? food.carbsG : 0;
+    const fatG = Number.isFinite(food.fatG) ? food.fatG : 0;
+
+    await db.runAsync(
+      `INSERT INTO food_items
+      (id, user_id, brand_id, brand_name, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        user_id = excluded.user_id,
+        brand_id = excluded.brand_id,
+        brand_name = excluded.brand_name,
+        name = excluded.name,
+        serving_size = excluded.serving_size,
+        serving_unit = excluded.serving_unit,
+        grams_per_serving = excluded.grams_per_serving,
+        calories = excluded.calories,
+        protein_g = excluded.protein_g,
+        carbs_g = excluded.carbs_g,
+        fat_g = excluded.fat_g,
+        fiber_g = excluded.fiber_g,
+        sugar_g = excluded.sugar_g,
+        saturated_fat_g = excluded.saturated_fat_g,
+        sodium_mg = excluded.sodium_mg,
+        barcode = excluded.barcode,
+        source_provider = excluded.source_provider,
+        is_verified = excluded.is_verified,
+        is_custom = excluded.is_custom,
+        updated_at = excluded.updated_at,
+        deleted_at = null,
+        sync_status = 'synced'`,
+      [
+        food.id,
+        food.userId ?? null,
+        food.brandId ?? null,
+        food.brandName ?? null,
+        food.name,
+        servingSize,
+        servingUnit,
+        gramsPerServing,
+        calories,
+        proteinG,
+        carbsG,
+        fatG,
+        food.fiberG ?? null,
+        food.sugarG ?? null,
+        food.saturatedFatG ?? null,
+        food.sodiumMg ?? null,
+        food.barcode ?? null,
+        food.sourceProvider,
+        food.isVerified ? 1 : 0,
+        food.isCustom ? 1 : 0,
+        now,
+        now,
+        null,
+        'synced',
+        1,
+      ],
+    );
   }
 }
 
@@ -769,6 +860,31 @@ function mergeFoodSearchResults(localFoods: FoodItem[], remoteFoods: FoodItem[])
   }
 
   return Array.from(byKey.values()).slice(0, 50);
+}
+
+function mapSupabaseSearchFood(row: SupabaseFoodSearchRow): FoodItem {
+  return mapFood({
+    id: row.id,
+    user_id: null,
+    brand_id: null,
+    brand_name: row.brand_name,
+    name: row.name,
+    serving_size: row.serving_size ?? 100,
+    serving_unit: row.serving_unit ?? 'g',
+    grams_per_serving: row.grams_per_serving ?? row.serving_size ?? 100,
+    calories: row.calories ?? 0,
+    protein_g: row.protein_g ?? 0,
+    carbs_g: row.carbs_g ?? 0,
+    fat_g: row.fat_g ?? 0,
+    fiber_g: row.fiber_g,
+    sugar_g: row.sugar_g ?? null,
+    saturated_fat_g: row.saturated_fat_g ?? null,
+    sodium_mg: row.sodium_mg,
+    barcode: row.barcode ?? null,
+    source_provider: row.source_provider ?? 'search',
+    is_verified: row.is_verified,
+    is_custom: row.is_custom,
+  });
 }
 
 function normalizeFoodSourceProvider(value: string): FoodItem['sourceProvider'] {
@@ -817,6 +933,12 @@ function mapDiaryEntry(row: DiaryEntryRow): DiaryEntry {
     mealSlot: row.meal_slot,
     foodItemId: row.food_item_id,
     servings: row.servings,
+    quantityType: row.quantity_type ?? undefined,
+    totalGrams: row.total_grams ?? undefined,
+    totalCalories: row.total_calories ?? undefined,
+    totalProteinG: row.total_protein_g ?? undefined,
+    totalCarbsG: row.total_carbs_g ?? undefined,
+    totalFatG: row.total_fat_g ?? undefined,
     loggedAt: row.logged_at,
     foodNameSnapshot: row.food_name_snapshot,
     caloriesSnapshot: row.calories_snapshot,

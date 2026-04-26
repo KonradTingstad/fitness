@@ -216,6 +216,12 @@ export interface DiaryEntry extends AuditFields {
   foodItemId: ID;
   food?: FoodItem;
   servings: number;
+  quantityType?: 'portion' | 'gram';
+  totalGrams?: number;
+  totalCalories?: number;
+  totalProteinG?: number;
+  totalCarbsG?: number;
+  totalFatG?: number;
   loggedAt: string;
   foodNameSnapshot: string;
   caloriesSnapshot: number;

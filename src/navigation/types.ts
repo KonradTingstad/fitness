@@ -1,6 +1,6 @@
 import { NavigatorScreenParams } from '@react-navigation/native';
 
-import { MealSlot } from '@/domain/models';
+import { FoodItem, MealSlot } from '@/domain/models';
 import { ProgressWidgetCategory, ProgressWidgetMetric } from '@/features/progress/widgets/types';
 
 export type BottomTabParamList = {
@@ -19,6 +19,7 @@ export type RootStackParamList = {
   WorkoutSummary: { sessionId: string };
   ExerciseHistory: { exerciseId: string };
   FoodSearch: { mealSlot: MealSlot; localDate: string };
+  FoodEntryDetails: { mealSlot: MealSlot; localDate: string; food: FoodItem };
   CustomFood: { mealSlot: MealSlot; localDate: string };
   BarcodeScanner: { mealSlot: MealSlot; localDate: string };
   ProgressStatSelection: { category?: ProgressWidgetCategory } | undefined;

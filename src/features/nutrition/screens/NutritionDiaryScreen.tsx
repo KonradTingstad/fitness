@@ -66,7 +66,7 @@ import { queryKeys } from '@/hooks/queryKeys';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
-import { promptForMealAndServings, resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
+import { resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
 
@@ -852,7 +852,6 @@ export function NutritionDiaryScreen() {
   const feedbackCounterRef = useRef(0);
   const [calorieFeedback, setCalorieFeedback] = useState<CalorieFeedback | null>(null);
   const [expandedMealSlots, setExpandedMealSlots] = useState<Set<MealSlot>>(() => new Set());
-  const [recentlyAddedSearchFoodId, setRecentlyAddedSearchFoodId] = useState<string | null>(null);
   const [recentlyAddedSavedMealId, setRecentlyAddedSavedMealId] = useState<string | null>(null);
   const [goalDraft, setGoalDraft] = useState<{
     goal: GoalEditorType;
@@ -884,13 +883,6 @@ export function NutritionDiaryScreen() {
   const weeklyCalories = useWeeklyCalories(localDate);
   const calorieStreak = useCalorieStreak(localDate);
 
-  const flashSearchAdded = (foodItemId: string) => {
-    setRecentlyAddedSearchFoodId(foodItemId);
-    setTimeout(() => {
-      setRecentlyAddedSearchFoodId((current) => (current === foodItemId ? null : current));
-    }, 720);
-  };
-
   const flashSavedMealAdded = (savedMealId: string) => {
     setRecentlyAddedSavedMealId(savedMealId);
     setTimeout(() => {
@@ -899,11 +891,12 @@ export function NutritionDiaryScreen() {
   };
 
   const quickAdd = useMutation({
-    mutationFn: (input: { foodItemId: string; mealSlot: MealSlot; servings?: number }) =>
+    mutationFn: (input: { foodItemId: string; mealSlot: MealSlot; servings?: number; food?: FoodItem }) =>
       addDiaryEntry({
         localDate,
         mealSlot: input.mealSlot,
         foodItemId: input.foodItemId,
+        food: input.food,
         servings: input.servings ?? 1,
       }),
     onSuccess: (_entryId, input) => {
@@ -913,7 +906,6 @@ export function NutritionDiaryScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
       queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
-      flashSearchAdded(input.foodItemId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     onError: (error) => Alert.alert('Meal quick add', error instanceof Error ? error.message : 'Unable to add food.'),
@@ -1300,16 +1292,13 @@ export function NutritionDiaryScreen() {
   const quickAddSearchFood = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.selectionAsync();
-    quickAdd.mutate({ foodItemId: food.id, mealSlot: lastUsedSearchMealSlot });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate });
   };
 
   const openSearchFoodDetails = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    promptForMealAndServings({
-      foodName: food.name,
-      onSubmit: (mealSlot, servings) => quickAdd.mutate({ foodItemId: food.id, mealSlot, servings }),
-    });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate });
   };
 
   const showSearchFilter = (filter: SearchFilter) => {
@@ -1736,19 +1725,18 @@ export function NutritionDiaryScreen() {
               </View>
               <Pressable
                 accessibilityRole="button"
-                disabled={quickAdd.isPending && quickAdd.variables?.foodItemId === food.id}
                 onLongPress={() => openSearchFoodDetails(food)}
                 onPress={() => quickAddSearchFood(food)}
                 style={({ pressed }) => [
                   styles.quickAddButton,
                   {
-                    backgroundColor: recentlyAddedSearchFoodId === food.id ? 'rgba(53,199,122,0.22)' : theme.colors.surfaceAlt,
-                    opacity: pressed || (quickAdd.isPending && quickAdd.variables?.foodItemId === food.id) ? 0.78 : 1,
-                    transform: [{ scale: recentlyAddedSearchFoodId === food.id ? 1.04 : pressed ? 0.96 : 1 }],
+                    backgroundColor: theme.colors.surfaceAlt,
+                    opacity: pressed ? 0.78 : 1,
+                    transform: [{ scale: pressed ? 0.96 : 1 }],
                   },
                 ]}
               >
-                <Plus size={18} color={recentlyAddedSearchFoodId === food.id ? '#8CF2B6' : theme.colors.primary} />
+                <Plus size={18} color={theme.colors.primary} />
               </Pressable>
             </View>
           </NutritionCard>

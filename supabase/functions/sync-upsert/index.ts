@@ -325,6 +325,12 @@ Deno.serve(async (req) => {
             meal_slot: (payload.mealSlot as string | undefined) ?? null,
             food_item_id: (payload.foodItemId as string | undefined) ?? null,
             servings: (payload.servings as number | undefined) ?? null,
+            quantity_type: (payload.quantityType as string | undefined) ?? null,
+            total_grams: (payload.totalGrams as number | undefined) ?? null,
+            total_calories: (payload.totalCalories as number | undefined) ?? null,
+            total_protein_g: (payload.totalProteinG as number | undefined) ?? null,
+            total_carbs_g: (payload.totalCarbsG as number | undefined) ?? null,
+            total_fat_g: (payload.totalFatG as number | undefined) ?? null,
             logged_at: nowIso,
             updated_at: nowIso,
           });
@@ -336,6 +342,12 @@ Deno.serve(async (req) => {
         if (hasValue(payload.mealSlot)) patch.meal_slot = payload.mealSlot;
         if (hasValue(payload.foodItemId)) patch.food_item_id = payload.foodItemId;
         if (hasValue(payload.loggedAt)) patch.logged_at = toIsoOrNull(payload.loggedAt);
+        if (hasValue(payload.quantityType)) patch.quantity_type = payload.quantityType;
+        if (hasValue(payload.totalGrams)) patch.total_grams = payload.totalGrams;
+        if (hasValue(payload.totalCalories)) patch.total_calories = payload.totalCalories;
+        if (hasValue(payload.totalProteinG)) patch.total_protein_g = payload.totalProteinG;
+        if (hasValue(payload.totalCarbsG)) patch.total_carbs_g = payload.totalCarbsG;
+        if (hasValue(payload.totalFatG)) patch.total_fat_g = payload.totalFatG;
 
         const { error } = await supabase.from('diary_entries').update(patch).eq('id', entityId);
         if (error) throw new Error(error.message);

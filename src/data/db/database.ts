@@ -444,6 +444,13 @@ CREATE TABLE IF NOT EXISTS diary_entries (
 CREATE INDEX IF NOT EXISTS idx_diary_entries_day ON diary_entries(user_id, diary_day_id);
 CREATE INDEX IF NOT EXISTS idx_diary_entries_meal ON diary_entries(meal_slot);
 
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS quantity_type TEXT;
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_grams REAL;
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_calories REAL;
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_protein_g REAL;
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_carbs_g REAL;
+ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_fat_g REAL;
+
 CREATE TABLE IF NOT EXISTS water_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

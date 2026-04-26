@@ -1,22 +1,19 @@
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { Barcode, Plus, Search } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AppText } from '@/components/AppText';
 import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
-import { addDiaryEntry } from '@/data/repositories/nutritionRepository';
 import { FoodItem, MealSlot } from '@/domain/models';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
-import { promptForMealAndServings, resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
+import { resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
 import { useDiary, useFoodSearch, useFrequentlyLoggedFoods, useRecentFoods } from '@/hooks/useAppQueries';
-import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
 
@@ -27,9 +24,7 @@ export function FoodSearchScreen() {
   const theme = useAppTheme();
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
-  const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
-  const [recentlyAddedFoodId, setRecentlyAddedFoodId] = useState<string | null>(null);
   const diary = useDiary(route.params.localDate);
   const foods = useFoodSearch(query);
   const recent = useRecentFoods();
@@ -39,44 +34,16 @@ export function FoodSearchScreen() {
     [diary.data?.day.entries, route.params.mealSlot],
   );
 
-  const flashAdded = (foodItemId: string) => {
-    setRecentlyAddedFoodId(foodItemId);
-    setTimeout(() => {
-      setRecentlyAddedFoodId((current) => (current === foodItemId ? null : current));
-    }, 720);
-  };
-
-  const addFood = useMutation({
-    mutationFn: (input: { food: FoodItem; mealSlot: MealSlot; servings: number }) =>
-      addDiaryEntry({
-        localDate: route.params.localDate,
-        mealSlot: input.mealSlot,
-        foodItemId: input.food.id,
-        servings: input.servings,
-      }),
-    onSuccess: (_entryId, input) => {
-      flashAdded(input.food.id);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(route.params.localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
-    },
-    onError: (error) => Alert.alert('Add food', error instanceof Error ? error.message : 'Unable to add food.'),
-  });
-
-  const quickAddFood = (food: FoodItem) => {
+  const openFoodEntryDetails = (food: FoodItem, mealSlot: MealSlot) => {
     void Haptics.selectionAsync();
-    addFood.mutate({ food, mealSlot: lastUsedMealSlot, servings: 1 });
-  };
-
-  const openDetailedAdd = (food: FoodItem) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    promptForMealAndServings({
-      foodName: food.name,
-      onSubmit: (mealSlot, servings) => addFood.mutate({ food, mealSlot, servings }),
+    navigation.navigate('FoodEntryDetails', {
+      food,
+      localDate: route.params.localDate,
+      mealSlot,
     });
   };
+
+  const openDefaultFoodEntryDetails = (food: FoodItem) => openFoodEntryDetails(food, lastUsedMealSlot);
 
   const results = query.trim().length ? foods.data ?? [] : recent.data ?? [];
   const title = query.trim().length ? 'Search results' : 'Recent foods';
@@ -100,7 +67,7 @@ export function FoodSearchScreen() {
         <NutritionButton label="Barcode" icon={Barcode} variant="soft" onPress={() => navigation.navigate('BarcodeScanner', route.params)} style={styles.quickButton} />
       </View>
 
-      <FoodSuggestionStrip suggestions={suggestions.data ?? []} onSelect={quickAddFood} onLongPress={openDetailedAdd} />
+      <FoodSuggestionStrip suggestions={suggestions.data ?? []} onSelect={openDefaultFoodEntryDetails} onLongPress={openDefaultFoodEntryDetails} />
 
       <AppText variant="section">{title}</AppText>
       {foods.isLoading || recent.isLoading || diary.isLoading ? (
@@ -110,10 +77,7 @@ export function FoodSearchScreen() {
           <FoodRow
             key={food.id}
             food={food}
-            isAdding={addFood.isPending && addFood.variables?.food.id === food.id}
-            isRecentlyAdded={recentlyAddedFoodId === food.id}
-            onQuickAdd={() => quickAddFood(food)}
-            onDetailedAdd={() => openDetailedAdd(food)}
+            onQuickAdd={() => openDefaultFoodEntryDetails(food)}
           />
         ))
       ) : (
@@ -131,16 +95,10 @@ export function FoodSearchScreen() {
 
 function FoodRow({
   food,
-  isAdding,
-  isRecentlyAdded,
   onQuickAdd,
-  onDetailedAdd,
 }: {
   food: FoodItem;
-  isAdding: boolean;
-  isRecentlyAdded: boolean;
   onQuickAdd: () => void;
-  onDetailedAdd: () => void;
 }) {
   const theme = useAppTheme();
   return (
@@ -158,14 +116,11 @@ function FoodRow({
         </View>
         <Pressable
           accessibilityRole="button"
-          disabled={isAdding}
-          onLongPress={onDetailedAdd}
           onPress={onQuickAdd}
           style={({ pressed }) => [
             styles.add,
-            { backgroundColor: isRecentlyAdded ? '#8CF2B6' : theme.colors.primary },
-            (pressed || isAdding) && { opacity: 0.78, transform: [{ scale: 0.96 }] },
-            isRecentlyAdded && { transform: [{ scale: 1.04 }] },
+            { backgroundColor: theme.colors.primary },
+            pressed && { opacity: 0.78, transform: [{ scale: 0.96 }] },
           ]}
         >
           <Plus color="#08100C" size={18} strokeWidth={3} />

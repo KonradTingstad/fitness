@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Dumbbell, Home, LineChart, Soup } from 'lucide-react-native';
-import { StyleSheet, useWindowDimensions } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AuthScreen } from '@/features/auth/screens/AuthScreen';
@@ -20,9 +20,11 @@ import { ProgressStatConfigScreen } from '@/features/progress/screens/ProgressSt
 import { ProgressStatSelectionScreen } from '@/features/progress/screens/ProgressStatSelectionScreen';
 import { ProgressScreen } from '@/features/progress/screens/ProgressScreen';
 import { ExerciseHistoryScreen } from '@/features/workouts/screens/ExerciseHistoryScreen';
+import { EditProgramScreen } from '@/features/workouts/screens/EditProgramScreen';
 import { LiveWorkoutScreen } from '@/features/workouts/screens/LiveWorkoutScreen';
 import { WorkoutDashboardScreen } from '@/features/workouts/screens/WorkoutDashboardScreen';
 import { WorkoutSummaryScreen } from '@/features/workouts/screens/WorkoutSummaryScreen';
+import { ActiveWorkoutOverlay } from '@/features/workouts/components/live/ActiveWorkoutOverlay';
 import { BottomTabParamList, RootStackParamList } from '@/navigation/types';
 import { useAppStore } from '@/stores/appStore';
 import { useAppTheme } from '@/theme/theme';
@@ -38,79 +40,85 @@ function MainTabs() {
   const tabBarHorizontalInset = screenWidth < 360 ? 14 : 18;
 
   return (
-    <Tabs.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.muted,
-        tabBarBackground: () => (
-          <>
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']}
-              locations={[0, 0.36, 1]}
-              style={[
-                styles.tabBarVeil,
-                {
-                  left: -tabBarHorizontalInset,
-                  right: -tabBarHorizontalInset,
-                  bottom: -floatingBottom - 4,
-                },
-              ]}
-            />
-            <BlurView pointerEvents="none" intensity={48} tint="dark" style={styles.tabBarGlass}>
+    <View style={styles.tabsRoot}>
+      <Tabs.Navigator
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarActiveTintColor: theme.colors.primary,
+          tabBarInactiveTintColor: theme.colors.muted,
+          tabBarBackground: () => (
+            <>
               <LinearGradient
-                colors={['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']}
-                locations={[0, 0.45, 1]}
-                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+                colors={['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']}
+                locations={[0, 0.36, 1]}
+                style={[
+                  styles.tabBarVeil,
+                  {
+                    left: -tabBarHorizontalInset,
+                    right: -tabBarHorizontalInset,
+                    bottom: -floatingBottom - 4,
+                  },
+                ]}
               />
-            </BlurView>
-          </>
-        ),
-        tabBarStyle: {
-          backgroundColor: 'transparent',
-          borderColor: 'transparent',
-          borderTopWidth: 0,
-          borderWidth: 0,
-          borderRadius: 18,
-          height: 62,
-          paddingBottom: 6,
-          paddingTop: 6,
-          marginHorizontal: tabBarHorizontalInset,
-          position: 'absolute',
-          bottom: floatingBottom,
-          elevation: 8,
-          shadowColor: '#000',
-          shadowOpacity: 0.18,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 6 },
-        },
-        tabBarItemStyle: {
-          flex: 1,
-          paddingVertical: 0,
-        },
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '700',
-        },
-        tabBarIcon: ({ color, size }) => {
-          const iconSize = Math.min(size - 3, 22);
-          if (route.name === 'Home') return <Home size={iconSize} color={color} />;
-          if (route.name === 'Workouts') return <Dumbbell size={iconSize} color={color} />;
-          if (route.name === 'Nutrition') return <Soup size={iconSize} color={color} />;
-          return <LineChart size={iconSize} color={color} />;
-        },
-      })}
-    >
-      <Tabs.Screen name="Home" component={HomeScreen} />
-      <Tabs.Screen name="Workouts" component={WorkoutDashboardScreen} />
-      <Tabs.Screen name="Nutrition" component={NutritionDiaryScreen} />
-      <Tabs.Screen name="Progress" component={ProgressScreen} />
-    </Tabs.Navigator>
+              <BlurView pointerEvents="none" intensity={48} tint="dark" style={styles.tabBarGlass}>
+                <LinearGradient
+                  colors={['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']}
+                  locations={[0, 0.45, 1]}
+                  style={StyleSheet.absoluteFill}
+                />
+              </BlurView>
+            </>
+          ),
+          tabBarStyle: {
+            backgroundColor: 'transparent',
+            borderColor: 'transparent',
+            borderTopWidth: 0,
+            borderWidth: 0,
+            borderRadius: 18,
+            height: 62,
+            paddingBottom: 6,
+            paddingTop: 6,
+            marginHorizontal: tabBarHorizontalInset,
+            position: 'absolute',
+            bottom: floatingBottom,
+            elevation: 8,
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowRadius: 14,
+            shadowOffset: { width: 0, height: 6 },
+          },
+          tabBarItemStyle: {
+            flex: 1,
+            paddingVertical: 0,
+          },
+          tabBarLabelStyle: {
+            fontSize: 10,
+            fontWeight: '700',
+          },
+          tabBarIcon: ({ color, size }) => {
+            const iconSize = Math.min(size - 3, 22);
+            if (route.name === 'Home') return <Home size={iconSize} color={color} />;
+            if (route.name === 'Workouts') return <Dumbbell size={iconSize} color={color} />;
+            if (route.name === 'Nutrition') return <Soup size={iconSize} color={color} />;
+            return <LineChart size={iconSize} color={color} />;
+          },
+        })}
+      >
+        <Tabs.Screen name="Home" component={HomeScreen} />
+        <Tabs.Screen name="Workouts" component={WorkoutDashboardScreen} />
+        <Tabs.Screen name="Nutrition" component={NutritionDiaryScreen} />
+        <Tabs.Screen name="Progress" component={ProgressScreen} />
+      </Tabs.Navigator>
+      <ActiveWorkoutOverlay />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  tabsRoot: {
+    flex: 1,
+  },
   tabBarVeil: {
     position: 'absolute',
     top: 0,
@@ -161,6 +169,7 @@ export function RootNavigator() {
             <Stack.Screen name="LiveWorkout" component={LiveWorkoutScreen} options={{ title: 'Live Workout' }} />
             <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} options={{ title: 'Workout Summary' }} />
             <Stack.Screen name="ExerciseHistory" component={ExerciseHistoryScreen} options={{ title: 'Exercise History' }} />
+            <Stack.Screen name="EditProgram" component={EditProgramScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FoodSearch" component={FoodSearchScreen} options={{ title: 'Add Food' }} />
             <Stack.Screen name="FoodEntryDetails" component={FoodEntryDetailsScreen} options={{ title: 'Food Details' }} />
             <Stack.Screen name="CustomFood" component={CustomFoodScreen} options={{ title: 'Custom Food' }} />

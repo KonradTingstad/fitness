@@ -67,6 +67,7 @@ import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
 import { resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
+import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
 
@@ -882,6 +883,7 @@ export function NutritionDiaryScreen() {
   const frequentlyLoggedFoods = useFrequentlyLoggedFoods();
   const weeklyCalories = useWeeklyCalories(localDate);
   const calorieStreak = useCalorieStreak(localDate);
+  const nutritionBottomPadding = useWorkoutOverlayPadding(28);
 
   const flashSavedMealAdded = (savedMealId: string) => {
     setRecentlyAddedSavedMealId(savedMealId);
@@ -1553,7 +1555,7 @@ export function NutritionDiaryScreen() {
 
   if (diary.isLoading || profile.isLoading || nutritionLibrary.isLoading || recentFoods.isLoading || mealsPerDayTarget.isLoading) {
     return (
-      <NutritionScreen resetScrollOnBlur>
+      <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
         <LoadingState label="Loading nutrition" />
       </NutritionScreen>
     );
@@ -1561,7 +1563,7 @@ export function NutritionDiaryScreen() {
 
   if (!diaryData || !goals) {
     return (
-      <NutritionScreen resetScrollOnBlur>
+      <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
         <EmptyState icon={Target} title="Nutrition data unavailable" body="Try reloading once profile and diary data are ready." />
       </NutritionScreen>
     );
@@ -2101,7 +2103,7 @@ export function NutritionDiaryScreen() {
   };
 
   return (
-    <NutritionScreen resetScrollOnBlur>
+    <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
       <View style={styles.header}>
         <View>
           <AppText variant="title">Nutrition</AppText>

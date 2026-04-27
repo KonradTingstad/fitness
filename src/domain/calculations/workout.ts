@@ -49,3 +49,12 @@ export function detectPersonalRecords(
   }
   return records;
 }
+
+export function generateWorkoutTitleForTimeOfDay(now = new Date()): string {
+  const hour = now.getHours();
+  if (hour < 5) return 'Night Workout';
+  if (hour < 12) return 'Morning Workout';
+  if (hour < 17) return 'Afternoon Workout';
+  if (hour < 22) return 'Evening Workout';
+  return 'Night Workout';
+}

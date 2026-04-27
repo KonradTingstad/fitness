@@ -25,6 +25,8 @@ import { toLocalDateKey } from '@/domain/calculations/dates';
 import { useDashboard, useRoutines } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
+import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
+import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
 import { useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -125,6 +127,8 @@ export function HomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
+  const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
+  const workoutBottomPadding = useWorkoutOverlayPadding(120);
   const dashboard = useDashboard();
   const routines = useRoutines();
   const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
@@ -144,7 +148,7 @@ export function HomeScreen() {
     onSuccess: (sessionId) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      navigation.navigate('LiveWorkout', { sessionId });
+      openLiveWorkout(sessionId);
     },
   });
 
@@ -248,15 +252,11 @@ export function HomeScreen() {
       navigation.navigate('WorkoutSummary', { sessionId: data.todayPlan.sessionId });
       return;
     }
-    navigation.navigate('LiveWorkout', { sessionId: data.todayPlan.sessionId });
+    openLiveWorkout(data.todayPlan.sessionId);
   };
 
   const startAction = () => {
-    if (data.todayPlan?.action === 'view_workout' && data.todayPlan.sessionId) {
-      navigation.navigate('LiveWorkout', { sessionId: data.todayPlan.sessionId });
-      return;
-    }
-    startWorkout.mutate(data.todayPlan?.routineId ?? routines.data?.[0]?.id);
+    startWorkout.mutate(undefined);
   };
 
   const fallbackRoutine = routines.data?.[0];
@@ -420,7 +420,7 @@ export function HomeScreen() {
             {
               paddingTop: HERO_MAX_HEIGHT - 26,
               paddingHorizontal: theme.spacing(4),
-              paddingBottom: 120,
+              paddingBottom: workoutBottomPadding,
             },
           ]}
           onScroll={onScroll}
@@ -488,7 +488,7 @@ export function HomeScreen() {
             </View>
 
             <View style={styles.actionRow}>
-              <Button label="Start workout" icon={Dumbbell} onPress={startAction} style={styles.actionButton} />
+              <Button label="Start empty workout" icon={Dumbbell} onPress={startAction} style={styles.actionButton} />
               <Button
                 label="Log meal"
                 icon={Utensils}

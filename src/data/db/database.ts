@@ -7,6 +7,19 @@ const SCHEMA_VERSION = 1;
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
+type ExistingColumn = {
+  name: string;
+};
+
+const diaryEntryColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'quantity_type', definition: 'TEXT' },
+  { name: 'total_grams', definition: 'REAL' },
+  { name: 'total_calories', definition: 'REAL' },
+  { name: 'total_protein_g', definition: 'REAL' },
+  { name: 'total_carbs_g', definition: 'REAL' },
+  { name: 'total_fat_g', definition: 'REAL' },
+];
+
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
     databasePromise = SQLite.openDatabaseAsync(DB_NAME);
@@ -14,10 +27,24 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   return databasePromise;
 }
 
+async function ensureDiaryEntryColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(diary_entries);');
+  const existingColumns = new Set(columns.map((column) => column.name));
+
+  for (const column of diaryEntryColumns) {
+    if (existingColumns.has(column.name)) {
+      continue;
+    }
+
+    await db.execAsync(`ALTER TABLE diary_entries ADD COLUMN ${column.name} ${column.definition};`);
+  }
+}
+
 export async function initializeDatabase(): Promise<void> {
   const db = await getDatabase();
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(MIGRATION_SQL);
+  await ensureDiaryEntryColumns(db);
   const version = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [
     'schema_version',
   ]);
@@ -198,6 +225,22 @@ CREATE TABLE IF NOT EXISTS workout_plans (
   FOREIGN KEY(routine_id) REFERENCES routines(id)
 );
 CREATE INDEX IF NOT EXISTS idx_workout_plans_user_date ON workout_plans(user_id, local_date);
+
+CREATE TABLE IF NOT EXISTS workout_program_days (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  activity_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  routine_id TEXT,
+  estimated_duration_minutes INTEGER,
+  metadata TEXT,
+  ${auditColumns},
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(routine_id) REFERENCES routines(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workout_program_days_user_date ON workout_program_days(user_id, local_date);
+CREATE INDEX IF NOT EXISTS idx_workout_program_days_user_activity ON workout_program_days(user_id, activity_type);
 
 CREATE TABLE IF NOT EXISTS workout_sessions (
   id TEXT PRIMARY KEY,
@@ -443,13 +486,6 @@ CREATE TABLE IF NOT EXISTS diary_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_diary_entries_day ON diary_entries(user_id, diary_day_id);
 CREATE INDEX IF NOT EXISTS idx_diary_entries_meal ON diary_entries(meal_slot);
-
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS quantity_type TEXT;
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_grams REAL;
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_calories REAL;
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_protein_g REAL;
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_carbs_g REAL;
-ALTER TABLE diary_entries ADD COLUMN IF NOT EXISTS total_fat_g REAL;
 
 CREATE TABLE IF NOT EXISTS water_logs (
   id TEXT PRIMARY KEY,

@@ -13,7 +13,9 @@ import {
   Clock,
   Dumbbell,
   EllipsisVertical,
+  Flag,
   Flame,
+  Heart,
   History,
   Minus,
   Pencil,
@@ -34,10 +36,11 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
-import { WorkoutPlanItem, listWorkoutSessionsForRange, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
-import { useExercises, useRecentWorkouts, useRoutines, useWorkoutPlansForRange, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
+import { ProgramScheduleDay, WorkoutPlanItem, listWorkoutSessionsForRange, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
+import { useExercises, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutPlansForRange, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
+import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -502,10 +505,20 @@ function scheduleTitleForCell(title: string): string {
   return title.replace(/\s+Strength$/i, '');
 }
 
+function iconForProgramDay(day: ProgramScheduleDay) {
+  if (day.activityType === 'rest') return Minus;
+  if (day.activityType === 'cardio') return Heart;
+  if (day.activityType === 'padel') return Circle;
+  if (day.activityType === 'golf') return Flag;
+  if (day.activityType === 'recovery') return Circle;
+  return Dumbbell;
+}
+
 export function WorkoutDashboardScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
+  const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
   const historyYearScrollRef = useRef<ScrollView>(null);
   const historyMultiYearScrollRef = useRef<ScrollView>(null);
   const [tab, setTab] = useState<WorkoutTab>('today');
@@ -533,6 +546,7 @@ export function WorkoutDashboardScreen() {
   const routines = useRoutines();
   const recent = useRecentWorkouts();
   const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
+  const programSchedule = useProgramScheduleForRange(localDateKey(weekStart), localDateKey(weekEnd));
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRange.startLocalDate, historyCalendarRange.endLocalDate);
   const exercises = useExercises();
@@ -612,7 +626,7 @@ export function WorkoutDashboardScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
       queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
-      navigation.navigate('LiveWorkout', { sessionId });
+      openLiveWorkout(sessionId);
     },
   });
 
@@ -622,11 +636,11 @@ export function WorkoutDashboardScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
-      navigation.navigate('LiveWorkout', { sessionId });
+      openLiveWorkout(sessionId);
     },
   });
 
-  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || workoutSessions.isLoading || exercises.isLoading) {
+  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || programSchedule.isLoading || workoutSessions.isLoading || exercises.isLoading) {
     return <LoadingState label="Loading workouts" />;
   }
 
@@ -635,6 +649,7 @@ export function WorkoutDashboardScreen() {
   const sessionRange = workoutSessions.data ?? [];
   const historyCalendarSessionRange = historyCalendarSessions.data ?? [];
   const exerciseList = exercises.data ?? [];
+  const weekScheduleDays = programSchedule.data ?? [];
   const suggestedRoutine = routineList[0];
   const planMap = new Map(planList.map((plan) => [plan.localDate, plan]));
   const groupedSessions = sessionsByLocalDate(sessionRange);
@@ -996,7 +1011,7 @@ export function WorkoutDashboardScreen() {
               icon={Play}
               onPress={() => {
                 if (activeToday) {
-                  navigation.navigate('LiveWorkout', { sessionId: activeToday.id });
+                  openLiveWorkout(activeToday.id);
                   return;
                 }
                 if (isPlannedToday && todayProgramDay.routineId) {
@@ -1107,16 +1122,27 @@ export function WorkoutDashboardScreen() {
       <Card>
         <AppText variant="section">Weekly schedule</AppText>
         <View style={styles.programRow}>
-          {PROGRAM_WEEK.map((day, index) => {
-            const iconColor = day.type === 'rest' ? theme.colors.muted : theme.colors.primary;
-            const Icon = day.type === 'rest' ? Minus : Dumbbell;
+          {weekScheduleDays.map((day, index) => {
+            const iconColor =
+              day.activityType === 'rest'
+                ? theme.colors.muted
+                : day.activityType === 'cardio'
+                  ? theme.colors.warning
+                  : day.activityType === 'padel'
+                    ? theme.colors.info
+                    : day.activityType === 'golf'
+                      ? theme.colors.primary
+                      : day.activityType === 'recovery'
+                        ? theme.colors.primary
+                        : theme.colors.primary;
+            const Icon = iconForProgramDay(day);
             return (
               <View
-                key={day.day}
+                key={day.localDate}
                 style={[styles.programCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}
               >
                 <AppText muted variant="small" numberOfLines={1}>
-                  {day.day}
+                  {format(new Date(`${day.localDate}T00:00:00`), 'EEE')}
                 </AppText>
                 <Icon size={18} color={iconColor} />
                 <AppText
@@ -1126,13 +1152,13 @@ export function WorkoutDashboardScreen() {
                   minimumFontScale={0.72}
                   style={styles.programTitle}
                 >
-                  {day.title}
+                  {scheduleTitleForCell(day.title)}
                 </AppText>
               </View>
             );
           })}
         </View>
-        <Button label="Edit program" icon={Pencil} variant="secondary" onPress={() => Alert.alert('Program', 'Program editing can be opened from this action.')} />
+        <Button label="Edit program" icon={Pencil} variant="secondary" onPress={() => navigation.navigate('EditProgram', { initialLocalDate: todayKey })} />
       </Card>
 
       <View style={styles.spaceBetween}>
@@ -1539,7 +1565,7 @@ export function WorkoutDashboardScreen() {
           <AppText variant="title">Workouts</AppText>
           <AppText muted>Templates, history, and active logging.</AppText>
         </View>
-        <Button label="Empty" icon={Plus} variant="secondary" onPress={() => startEmpty.mutate()} />
+        <Button label="+ Empty" variant="secondary" onPress={() => startEmpty.mutate()} />
       </View>
 
       {renderTabs()}

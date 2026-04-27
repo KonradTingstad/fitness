@@ -4,6 +4,7 @@ import { ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppBackground } from '@/components/AppBackground';
+import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
 import { useAppTheme } from '@/theme/theme';
 
 interface Props extends PropsWithChildren {
@@ -16,7 +17,8 @@ interface Props extends PropsWithChildren {
 export function Screen({ children, scroll = true, padded = true, style, resetScrollOnBlur = false }: Props) {
   const theme = useAppTheme();
   const scrollViewRef = useRef<ScrollView>(null);
-  const contentStyle = [styles.content, padded && { padding: theme.spacing(4) }, style];
+  const workoutPadding = useWorkoutOverlayPadding(0);
+  const contentStyle = [styles.content, { paddingBottom: 24 + workoutPadding }, padded && { padding: theme.spacing(4) }, style];
 
   useFocusEffect(
     useCallback(() => {
@@ -54,6 +56,5 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: 12,
-    paddingBottom: 24,
   },
 });

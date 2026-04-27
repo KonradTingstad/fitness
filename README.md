@@ -1,6 +1,6 @@
 # FormFuel (Fitness App)
 
-Sist oppdatert: 2026-04-24
+Sist oppdatert: 2026-04-27
 
 ## Viktig vedlikeholdsregel
 
@@ -51,16 +51,17 @@ Ved appstart (`App.tsx`) skjer dette:
 - Workouts
 - Nutrition
 - Progress
-- Profile
 
 ### Stack-skjermer
 
 - `LiveWorkout`
 - `WorkoutSummary`
 - `ExerciseHistory`
+- `EditProgram`
 - `FoodSearch`
 - `CustomFood`
 - `BarcodeScanner`
+- `ProfileSettings`
 
 ---
 
@@ -84,7 +85,7 @@ Ved appstart (`App.tsx`) skjer dette:
   - "Today plan" (start workout / view workout / view summary)
   - hydration med "Add 250 ml"
 - Quick actions:
-  - Start workout
+  - Start empty workout
   - Log meal
 
 ### 3) Workouts
@@ -92,16 +93,29 @@ Ved appstart (`App.tsx`) skjer dette:
 `WorkoutDashboardScreen` har 4 faner:
 
 - `Today`: dagens planlagte okt/forslag, rest day-state, ukesstatus, streak og progress overview
-- `Program`: ukesplan + grupperte templates i 2-kolonne grid
+- `Program`: ukesplan + grupperte templates i 2-kolonne grid + full `Edit program` editor
 - `History`: ukesoppsummering, kalender og fullforte okter med sammendrag
 - `Exercises`: sok/filter, PR/last set-data, inngang til historikk
 
 Program-fanen:
 
+- viser `Weekly schedule` basert pa persistert ukesprogram (ikke hardkodet uke)
+- `Edit program` apner dedikert editor for ukevis planlegging
 - viser `My groups` med lokale workout-grupper
 - grupper kan foldes inn/ut og persisteres lokalt i AsyncStorage
 - templates vises som kompakte kort i 2-kolonne grid
 - hver gruppe har handlinger for rename, reorder, duplicate og delete
+
+`EditProgramScreen`:
+
+- ukevis navigasjon (forrige/neste uke) med datointervall
+- viser 7 dager for valgt uke
+- trykk pa dag for `Choose activity`-picker
+- aktivitetstyper:
+  - styrke fra lagrede rutiner/templates
+  - Cardio, Padel, Golf, Rest day, Active recovery
+- valg lagres per dag i lokal database (`workout_program_days`)
+- endringer reflekteres tilbake i Program-tabens `Weekly schedule`
 
 History-fanen:
 
@@ -214,6 +228,7 @@ Diary-fanen:
 - SQLite (`expo-sqlite`) er primar datakilde.
 - Tabellenes schema opprettes i `src/data/db/database.ts`.
 - Seed-data legges inn i `src/data/seed/sampleData.ts` for demo-bruker.
+- Ukesprogram per dag persisteres i `workout_program_days` (aktivitetstype, tittel, valgfri rutine, metadata).
 
 ### Sync-kjo
 
@@ -409,7 +424,7 @@ Disse dekker blant annet:
 ## Kjente begrensninger / TODO
 
 - Barcode scanner er arkitekturmessig pa plass, men faktisk provider-oppslag er ikke konfigurert.
-- Programredigering og template-creator i workout er forelopig knyttet til placeholders.
+- `Templates`-knappen i `Edit program` er forelopig en placeholder for snarveier/malsett.
 - History `Year` og `Multi-year` er forelopig oversiktsvisninger uten direkte drilldown per dag.
 - Export/Delete data i profile er placeholders for neste backend-slice.
 - Ingen omfattende repository-integrasjonstester enda (kun utvalgte domain-kalkulasjonstester).
@@ -421,6 +436,7 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-27: Implementert full `Edit program`-flyt i Workouts > Program med dedikert editor-skjerm, ukevis navigasjon, 7-dagers planlegging, aktivitetsvelger (styrkerutiner + Cardio/Padel/Golf/Rest/Recovery), ny persistering i `workout_program_days` og kobling tilbake til `Weekly schedule`-kortet.
 - 2026-04-24: Workouts er oppdatert med ny Today-layout/streak-logikk, grupperte Program-templates i 2-kolonne grid, fast hoyde pa History-kalenderen med Month/Year/Multi-year, intern scroll for Year/Multi-year, Year-grid med 3 kolonner og nyeste rekke nederst, Month-sperre mot fremtid, separat nyeste-anker for Year/Multi-year, manedslabels i Multi-year, cache/prefetch for kalenderbytte og felles gronn toppfade via `AppBackground`.
 - 2026-04-24: Nutrition `Diary` er redesignet som en mer dynamisk dashboard-layout med kalorikort, arc-progress, macro-progress og separate maltidskort i Workouts-stil.
 - 2026-04-25: Nutrition UI er polert med egen parallax-gradientbakgrunn, borderless gradientkort, mykere shadows, mer vertikal spacing og felles CTA-stil.

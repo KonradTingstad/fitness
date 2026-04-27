@@ -5,6 +5,7 @@ export const queryKeys = {
   workout: (id: string) => ['workout', id] as const,
   recentWorkouts: ['recentWorkouts'] as const,
   workoutPlans: (start: string, end: string) => ['workoutPlans', start, end] as const,
+  programSchedule: (start: string, end: string) => ['programSchedule', start, end] as const,
   workoutSessions: ['workoutSessions'] as const,
   workoutSessionsForRange: (start: string, end: string) => ['workoutSessions', start, end] as const,
   diary: (date: string) => ['diary', date] as const,

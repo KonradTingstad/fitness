@@ -1,7 +1,8 @@
 import { getDatabase } from '@/data/db/database';
 import { createId, DEMO_USER_ID } from '@/data/db/ids';
 import { enqueueSync } from '@/data/sync/syncQueue';
-import { calculateSetVolume, estimatedOneRepMax } from '@/domain/calculations/workout';
+import { shiftLocalDate } from '@/domain/calculations/dates';
+import { calculateSetVolume, estimatedOneRepMax, generateWorkoutTitleForTimeOfDay } from '@/domain/calculations/workout';
 import {
   Exercise,
   Routine,
@@ -94,6 +95,24 @@ type WorkoutPlanRow = {
   exercise_count: number;
 };
 
+type WorkoutProgramDayRow = {
+  id: string;
+  local_date: string;
+  activity_type: ProgramActivityType;
+  title: string;
+  routine_id: string | null;
+  estimated_duration_minutes: number | null;
+  metadata: string | null;
+  workout_name: string | null;
+  exercise_count: number | null;
+};
+
+type RoutineSummaryRow = {
+  id: string;
+  name: string;
+  exercise_count: number;
+};
+
 type WorkoutExerciseRow = {
   id: string;
   workout_session_id: string;
@@ -149,6 +168,37 @@ export interface WorkoutPlanItem {
   estimatedDurationMinutes: number;
   exerciseCount: number;
 }
+
+export type ProgramActivityType = 'strength' | 'cardio' | 'padel' | 'golf' | 'rest' | 'recovery';
+
+export interface ProgramScheduleDay {
+  id: string;
+  localDate: string;
+  activityType: ProgramActivityType;
+  title: string;
+  subtitle: string;
+  routineId?: string | null;
+  estimatedDurationMinutes: number;
+  exerciseCount: number;
+  source: 'custom' | 'default';
+}
+
+export interface UpsertProgramScheduleDayInput {
+  localDate: string;
+  activityType: ProgramActivityType;
+  title: string;
+  subtitle?: string | null;
+  routineId?: string | null;
+  estimatedDurationMinutes?: number | null;
+}
+
+const PROGRAM_ACTIVITY_DETAILS: Record<Exclude<ProgramActivityType, 'strength'>, { title: string; subtitle: string; estimatedDurationMinutes: number }> = {
+  cardio: { title: 'Cardio', subtitle: 'Moderate · ~35 min', estimatedDurationMinutes: 35 },
+  padel: { title: 'Padel', subtitle: 'Match / Training', estimatedDurationMinutes: 60 },
+  golf: { title: 'Golf', subtitle: '18 holes / Practice', estimatedDurationMinutes: 120 },
+  rest: { title: 'Rest day', subtitle: 'Recovery', estimatedDurationMinutes: 0 },
+  recovery: { title: 'Active recovery', subtitle: 'Mobility / Light walk', estimatedDurationMinutes: 30 },
+};
 
 export async function listExercises(userId = DEMO_USER_ID): Promise<Exercise[]> {
   const db = await getDatabase();
@@ -259,8 +309,106 @@ export async function listWorkoutPlansForRange(
   }));
 }
 
+export async function listProgramScheduleForRange(
+  startLocalDate: string,
+  endLocalDate: string,
+  userId = DEMO_USER_ID,
+): Promise<ProgramScheduleDay[]> {
+  const db = await getDatabase();
+  const [customRows, routineRows] = await Promise.all([
+    db.getAllAsync<WorkoutProgramDayRow>(
+      `SELECT pd.id, pd.local_date, pd.activity_type, pd.title, pd.routine_id, pd.estimated_duration_minutes,
+              pd.metadata, r.name AS workout_name, COUNT(re.id) AS exercise_count
+       FROM workout_program_days pd
+       LEFT JOIN routines r ON r.id = pd.routine_id AND r.deleted_at IS NULL
+       LEFT JOIN routine_exercises re ON re.routine_id = r.id AND re.deleted_at IS NULL
+       WHERE pd.user_id = ?
+         AND pd.local_date BETWEEN ? AND ?
+         AND pd.deleted_at IS NULL
+       GROUP BY pd.id, pd.local_date, pd.activity_type, pd.title, pd.routine_id, pd.estimated_duration_minutes, pd.metadata, r.name
+       ORDER BY pd.local_date ASC`,
+      [userId, startLocalDate, endLocalDate],
+    ),
+    db.getAllAsync<RoutineSummaryRow>(
+      `SELECT r.id, r.name, COUNT(re.id) AS exercise_count
+       FROM routines r
+       LEFT JOIN routine_exercises re ON re.routine_id = r.id AND re.deleted_at IS NULL
+       WHERE r.user_id = ? AND r.deleted_at IS NULL
+       GROUP BY r.id, r.name
+       ORDER BY r.sort_order ASC, r.name ASC`,
+      [userId],
+    ),
+  ]);
+
+  const customByDate = new Map(customRows.map((row) => [row.local_date, row]));
+  const localDates = localDatesBetween(startLocalDate, endLocalDate);
+
+  return localDates.map((localDate) => {
+    const custom = customByDate.get(localDate);
+    if (custom) {
+      return mapProgramScheduleRow(custom);
+    }
+    return buildDefaultProgramScheduleDay(localDate, routineRows);
+  });
+}
+
+export async function upsertProgramScheduleDay(
+  input: UpsertProgramScheduleDayInput,
+  userId = DEMO_USER_ID,
+): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM workout_program_days WHERE user_id = ? AND local_date = ? LIMIT 1',
+    [userId, input.localDate],
+  );
+
+  const metadata = input.subtitle?.trim() || null;
+  const routineId = input.activityType === 'strength' ? input.routineId ?? null : null;
+  const estimatedDurationMinutes = Math.max(0, Math.round(input.estimatedDurationMinutes ?? 0));
+
+  if (existing?.id) {
+    await db.runAsync(
+      `UPDATE workout_program_days
+       SET activity_type = ?, title = ?, routine_id = ?, estimated_duration_minutes = ?, metadata = ?,
+           updated_at = ?, deleted_at = NULL, sync_status = 'pending', version = version + 1
+       WHERE id = ?`,
+      [input.activityType, input.title, routineId, estimatedDurationMinutes, metadata, now, existing.id],
+    );
+    return;
+  }
+
+  await db.runAsync(
+    `INSERT INTO workout_program_days
+    (id, user_id, local_date, activity_type, title, routine_id, estimated_duration_minutes, metadata, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      createId('program_day'),
+      userId,
+      input.localDate,
+      input.activityType,
+      input.title,
+      routineId,
+      estimatedDurationMinutes,
+      metadata,
+      now,
+      now,
+      null,
+      'pending',
+      1,
+    ],
+  );
+}
+
 export async function startWorkoutFromRoutine(routineId: string, userId = DEMO_USER_ID): Promise<string> {
   const db = await getDatabase();
+  const existingActive = await db.getFirstAsync<{ id: string }>(
+    "SELECT id FROM workout_sessions WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY started_at DESC LIMIT 1",
+    [userId],
+  );
+  if (existingActive?.id) {
+    return existingActive.id;
+  }
   const routine = await db.getFirstAsync<RoutineRow>('SELECT * FROM routines WHERE id = ?', [routineId]);
   if (!routine) {
     throw new Error('Routine not found');
@@ -338,13 +486,21 @@ export async function startWorkoutFromRoutine(routineId: string, userId = DEMO_U
 
 export async function startEmptyWorkout(userId = DEMO_USER_ID): Promise<string> {
   const db = await getDatabase();
+  const existingActive = await db.getFirstAsync<{ id: string }>(
+    "SELECT id FROM workout_sessions WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY started_at DESC LIMIT 1",
+    [userId],
+  );
+  if (existingActive?.id) {
+    return existingActive.id;
+  }
   const now = new Date().toISOString();
   const sessionId = createId('workout');
+  const title = generateWorkoutTitleForTimeOfDay(new Date(now));
   await db.runAsync(
     `INSERT INTO workout_sessions
     (id, user_id, routine_id, title, started_at, ended_at, status, notes, created_at, updated_at, deleted_at, sync_status, version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [sessionId, userId, null, 'Empty Workout', now, null, 'active', null, now, now, null, 'pending', 1],
+    [sessionId, userId, null, title, now, null, 'active', null, now, now, null, 'pending', 1],
   );
   await enqueueSync('workout_session', sessionId, 'insert', { startedAt: now });
   return sessionId;
@@ -366,6 +522,41 @@ export async function addExerciseToWorkout(sessionId: string, exerciseId: string
   );
   await addSet(workoutExerciseId, 'normal');
   await enqueueSync('workout_exercise', workoutExerciseId, 'insert', { sessionId, exerciseId });
+}
+
+export async function removeExerciseFromWorkout(workoutExerciseId: string): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const exerciseRow = await db.getFirstAsync<WorkoutExerciseRow>(
+    'SELECT * FROM workout_exercises WHERE id = ? AND deleted_at IS NULL',
+    [workoutExerciseId],
+  );
+  if (!exerciseRow) {
+    throw new Error('Exercise entry not found');
+  }
+  const setRows = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM workout_sets WHERE workout_exercise_id = ? AND deleted_at IS NULL',
+    [workoutExerciseId],
+  );
+  await db.runAsync(
+    `UPDATE workout_sets
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE workout_exercise_id = ? AND deleted_at IS NULL`,
+    [now, now, workoutExerciseId],
+  );
+  await db.runAsync(
+    `UPDATE workout_exercises
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND deleted_at IS NULL`,
+    [now, now, workoutExerciseId],
+  );
+  for (const setRow of setRows) {
+    await enqueueSync('workout_set', setRow.id, 'delete', { id: setRow.id, workoutExerciseId });
+  }
+  await enqueueSync('workout_exercise', workoutExerciseId, 'delete', {
+    id: workoutExerciseId,
+    workoutSessionId: exerciseRow.workout_session_id,
+  });
 }
 
 export async function addSet(workoutExerciseId: string, setType: SetType = 'normal'): Promise<void> {
@@ -458,6 +649,97 @@ export async function discardWorkout(sessionId: string): Promise<void> {
     [now, now, sessionId],
   );
   await enqueueSync('workout_session', sessionId, 'delete', { id: sessionId });
+}
+
+export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const sessionRow = await db.getFirstAsync<WorkoutSessionRow>('SELECT * FROM workout_sessions WHERE id = ?', [sessionId]);
+
+  if (!sessionRow) {
+    throw new Error('Workout not found');
+  }
+  if (!sessionRow.routine_id) {
+    throw new Error('Workout has no linked routine');
+  }
+
+  const routineId = sessionRow.routine_id;
+  const workout = await getWorkoutSession(sessionId);
+  const existingRoutineExercises = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM routine_exercises WHERE routine_id = ? AND deleted_at IS NULL',
+    [routineId],
+  );
+
+  for (const row of existingRoutineExercises) {
+    await db.runAsync(
+      `UPDATE routine_exercise_set_templates
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
+      [now, now, row.id],
+    );
+  }
+
+  await db.runAsync(
+    `UPDATE routine_exercises
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE routine_id = ? AND deleted_at IS NULL`,
+    [now, now, routineId],
+  );
+
+  for (const [exerciseIndex, exercise] of workout.exercises.entries()) {
+    const routineExerciseId = createId('routine_exercise');
+    await db.runAsync(
+      `INSERT INTO routine_exercises
+      (id, routine_id, exercise_id, sort_order, superset_group, notes, default_rest_seconds, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        routineExerciseId,
+        routineId,
+        exercise.exerciseId,
+        exerciseIndex + 1,
+        exercise.supersetGroup ?? null,
+        exercise.notes ?? null,
+        120,
+        now,
+        now,
+        null,
+        'pending',
+        1,
+      ],
+    );
+
+    for (const [setIndex, set] of exercise.sets.entries()) {
+      const targetReps = set.reps ?? null;
+      await db.runAsync(
+        `INSERT INTO routine_exercise_set_templates
+        (id, routine_exercise_id, sort_order, set_type, target_reps_min, target_reps_max, target_weight_kg, duration_seconds, distance_meters, created_at, updated_at, deleted_at, sync_status, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('routine_set_template'),
+          routineExerciseId,
+          setIndex + 1,
+          set.setType,
+          targetReps,
+          targetReps,
+          set.weightKg ?? null,
+          set.durationSeconds ?? null,
+          set.distanceMeters ?? null,
+          now,
+          now,
+          null,
+          'pending',
+          1,
+        ],
+      );
+    }
+  }
+
+  await db.runAsync(
+    `UPDATE routines
+     SET updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ?`,
+    [now, routineId],
+  );
 }
 
 export async function getWorkoutSummary(sessionId: string): Promise<WorkoutSummary> {
@@ -570,6 +852,117 @@ export async function getWorkoutProgress(userId = DEMO_USER_ID): Promise<{
     [userId],
   );
   return { completedByWeek, volumeByWeek, muscleDistribution };
+}
+
+function localDatesBetween(startLocalDate: string, endLocalDate: string): string[] {
+  const dates: string[] = [];
+  let cursor = startLocalDate;
+  while (cursor <= endLocalDate) {
+    dates.push(cursor);
+    cursor = shiftLocalDate(cursor, 1);
+  }
+  return dates;
+}
+
+function normalizeProgramEstimatedMinutes(activityType: ProgramActivityType, estimatedDurationMinutes?: number | null): number {
+  if (estimatedDurationMinutes != null && Number.isFinite(estimatedDurationMinutes)) {
+    return Math.max(0, Math.round(estimatedDurationMinutes));
+  }
+  if (activityType === 'strength') {
+    return 45;
+  }
+  return PROGRAM_ACTIVITY_DETAILS[activityType].estimatedDurationMinutes;
+}
+
+function mapProgramScheduleRow(row: WorkoutProgramDayRow): ProgramScheduleDay {
+  const activityType = row.activity_type;
+  const exerciseCount = activityType === 'strength' ? row.exercise_count ?? 0 : 0;
+  const estimatedDurationMinutes =
+    activityType === 'strength'
+      ? row.estimated_duration_minutes ?? Math.max(30, exerciseCount * 12)
+      : normalizeProgramEstimatedMinutes(activityType, row.estimated_duration_minutes);
+  const title =
+    activityType === 'strength'
+      ? row.workout_name ?? row.title
+      : row.title || PROGRAM_ACTIVITY_DETAILS[activityType].title;
+  const subtitle =
+    row.metadata ??
+    (activityType === 'strength'
+      ? `${exerciseCount} exercises · ~${estimatedDurationMinutes} min`
+      : PROGRAM_ACTIVITY_DETAILS[activityType].subtitle);
+
+  return {
+    id: row.id,
+    localDate: row.local_date,
+    activityType,
+    title,
+    subtitle,
+    routineId: row.routine_id,
+    estimatedDurationMinutes,
+    exerciseCount,
+    source: 'custom',
+  };
+}
+
+function findRoutineForDefaultTemplate(title: string, routines: RoutineSummaryRow[]): RoutineSummaryRow | undefined {
+  const normalized = title.toLowerCase();
+  return routines.find((routine) => {
+    const name = routine.name.toLowerCase();
+    return name === normalized || name.includes(normalized) || normalized.includes(name);
+  });
+}
+
+function defaultProgramTemplateForDate(localDate: string): { activityType: ProgramActivityType; title: string } {
+  const jsDay = new Date(`${localDate}T00:00:00`).getDay();
+  const weekDay = (jsDay + 6) % 7;
+  switch (weekDay) {
+    case 0:
+      return { activityType: 'strength', title: 'Upper Strength' };
+    case 1:
+      return { activityType: 'rest', title: 'Rest day' };
+    case 2:
+      return { activityType: 'strength', title: 'Lower Strength' };
+    case 3:
+      return { activityType: 'strength', title: 'Pull' };
+    case 4:
+      return { activityType: 'rest', title: 'Rest day' };
+    case 5:
+      return { activityType: 'cardio', title: 'Cardio' };
+    default:
+      return { activityType: 'recovery', title: 'Active recovery' };
+  }
+}
+
+function buildDefaultProgramScheduleDay(localDate: string, routines: RoutineSummaryRow[]): ProgramScheduleDay {
+  const template = defaultProgramTemplateForDate(localDate);
+  if (template.activityType === 'strength') {
+    const routine = findRoutineForDefaultTemplate(template.title, routines);
+    const exerciseCount = routine?.exercise_count ?? 0;
+    const estimatedDurationMinutes = Math.max(30, exerciseCount * 12 || 45);
+    return {
+      id: `default_${localDate}`,
+      localDate,
+      activityType: 'strength',
+      title: routine?.name ?? template.title,
+      subtitle: `${exerciseCount} exercises · ~${estimatedDurationMinutes} min`,
+      routineId: routine?.id ?? null,
+      estimatedDurationMinutes,
+      exerciseCount,
+      source: 'default',
+    };
+  }
+  const detail = PROGRAM_ACTIVITY_DETAILS[template.activityType];
+  return {
+    id: `default_${localDate}`,
+    localDate,
+    activityType: template.activityType,
+    title: detail.title,
+    subtitle: detail.subtitle,
+    routineId: null,
+    estimatedDurationMinutes: detail.estimatedDurationMinutes,
+    exerciseCount: 0,
+    source: 'default',
+  };
 }
 
 async function hydrateRoutine(row: RoutineRow): Promise<Routine> {

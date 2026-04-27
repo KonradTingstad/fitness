@@ -18,6 +18,7 @@ export type RootStackParamList = {
   LiveWorkout: { sessionId: string };
   WorkoutSummary: { sessionId: string };
   ExerciseHistory: { exerciseId: string };
+  EditProgram: { initialLocalDate?: string } | undefined;
   FoodSearch: { mealSlot: MealSlot; localDate: string };
   FoodEntryDetails: { mealSlot: MealSlot; localDate: string; food: FoodItem };
   CustomFood: { mealSlot: MealSlot; localDate: string };

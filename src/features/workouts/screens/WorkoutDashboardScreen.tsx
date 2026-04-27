@@ -13,9 +13,7 @@ import {
   Clock,
   Dumbbell,
   EllipsisVertical,
-  Flag,
   Flame,
-  Heart,
   History,
   Minus,
   Pencil,
@@ -41,6 +39,7 @@ import { useExercises, useProgramScheduleForRange, useRecentWorkouts, useRoutine
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
+import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -505,15 +504,6 @@ function scheduleTitleForCell(title: string): string {
   return title.replace(/\s+Strength$/i, '');
 }
 
-function iconForProgramDay(day: ProgramScheduleDay) {
-  if (day.activityType === 'rest') return Minus;
-  if (day.activityType === 'cardio') return Heart;
-  if (day.activityType === 'padel') return Circle;
-  if (day.activityType === 'golf') return Flag;
-  if (day.activityType === 'recovery') return Circle;
-  return Dumbbell;
-}
-
 export function WorkoutDashboardScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
@@ -534,6 +524,10 @@ export function WorkoutDashboardScreen() {
   const todayMonthKey = localDateKey(startOfMonth(today));
   const weekStart = startOfWeek(today, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+  const [programWeekStart, setProgramWeekStart] = useState(() => weekStart);
+  const programWeekEnd = addDays(programWeekStart, 6);
+  const programWeekStartKey = localDateKey(programWeekStart);
+  const programWeekEndKey = localDateKey(programWeekEnd);
   const streakStart = addDays(today, -35);
   const planRangeStart = localDateKey(streakStart);
   const planRangeEnd = localDateKey(weekEnd);
@@ -542,11 +536,13 @@ export function WorkoutDashboardScreen() {
   const historyCalendarRange = getHistoryCalendarRange(historyCalendarAnchor, historyCalendarMode);
   const canGoToNextHistoryMonth = monthTimestamp(historyMonth) < monthTimestamp(today);
   const weekLabel = `Week of ${format(weekStart, 'd MMM')}`;
+  const programWeekLabel = `Week ${format(programWeekStart, 'w')}`;
+  const programWeekRangeLabel = `${format(programWeekStart, 'd MMM')} – ${format(programWeekEnd, 'd MMM')}`;
 
   const routines = useRoutines();
   const recent = useRecentWorkouts();
   const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
-  const programSchedule = useProgramScheduleForRange(localDateKey(weekStart), localDateKey(weekEnd));
+  const programSchedule = useProgramScheduleForRange(programWeekStartKey, programWeekEndKey);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRange.startLocalDate, historyCalendarRange.endLocalDate);
   const exercises = useExercises();
@@ -1120,9 +1116,46 @@ export function WorkoutDashboardScreen() {
   const renderProgramTab = () => (
     <>
       <Card>
-        <AppText variant="section">Weekly schedule</AppText>
+        <View style={styles.spaceBetween}>
+          <AppText variant="section">Weekly schedule</AppText>
+          <AppText muted variant="small">
+            {programWeekLabel}
+          </AppText>
+        </View>
+        <View style={styles.programWeekRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Previous week"
+            onPress={() => shiftProgramWeek(-1)}
+            style={({ pressed }) => [
+              styles.programWeekNavButton,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.78 : 1 },
+            ]}
+          >
+            <ChevronLeft size={16} color={theme.colors.text} />
+          </Pressable>
+
+          <View style={[styles.programWeekRangeWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+            <AppText weight="800" style={styles.programWeekRangeLabel}>
+              {programWeekRangeLabel}
+            </AppText>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Next week"
+            onPress={() => shiftProgramWeek(1)}
+            style={({ pressed }) => [
+              styles.programWeekNavButton,
+              { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.78 : 1 },
+            ]}
+          >
+            <ChevronRight size={16} color={theme.colors.text} />
+          </Pressable>
+        </View>
         <View style={styles.programRow}>
           {weekScheduleDays.map((day, index) => {
+            const date = new Date(`${day.localDate}T00:00:00`);
             const iconColor =
               day.activityType === 'rest'
                 ? theme.colors.muted
@@ -1135,30 +1168,25 @@ export function WorkoutDashboardScreen() {
                       : day.activityType === 'recovery'
                         ? theme.colors.primary
                         : theme.colors.primary;
-            const Icon = iconForProgramDay(day);
             return (
               <View
                 key={day.localDate}
                 style={[styles.programCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}
+                accessible
+                accessibilityRole="image"
+                accessibilityLabel={`${format(date, 'EEEE, d MMM')}: ${day.title}`}
               >
-                <AppText muted variant="small" numberOfLines={1}>
-                  {format(new Date(`${day.localDate}T00:00:00`), 'EEE')}
+                <AppText muted variant="small">
+                  {format(date, 'EEE')}
                 </AppText>
-                <Icon size={18} color={iconColor} />
-                <AppText
-                  weight="700"
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.72}
-                  style={styles.programTitle}
-                >
-                  {scheduleTitleForCell(day.title)}
-                </AppText>
+                <View style={[styles.programIconWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                  <ProgramActivityIcon activityType={day.activityType} size={18} color={iconColor} />
+                </View>
               </View>
             );
           })}
         </View>
-        <Button label="Edit program" icon={Pencil} variant="secondary" onPress={() => navigation.navigate('EditProgram', { initialLocalDate: todayKey })} />
+        <Button label="Edit program" icon={Pencil} variant="secondary" onPress={() => navigation.navigate('EditProgram', { initialLocalDate: programWeekStartKey })} />
       </Card>
 
       <View style={styles.spaceBetween}>
@@ -1191,6 +1219,10 @@ export function WorkoutDashboardScreen() {
 
   const shiftHistoryCalendar = (direction: -1 | 1) => {
     setHistoryMonth((current) => clampToLatestMonth(addMonths(current, direction), today));
+  };
+
+  const shiftProgramWeek = (direction: -1 | 1) => {
+    setProgramWeekStart((current) => addDays(current, direction * 7));
   };
 
   const renderHistoryCalendarTabs = () => (
@@ -1707,23 +1739,55 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
+  programWeekRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  programWeekNavButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  programWeekRangeWrap: {
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    minHeight: 34,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  programWeekRangeLabel: {
+    fontSize: 14,
+    textAlign: 'center',
+  },
   programRow: {
-    alignItems: 'flex-start',
+    alignItems: 'stretch',
     flexDirection: 'row',
     flexWrap: 'nowrap',
     justifyContent: 'space-between',
+    marginTop: 10,
   },
   programCell: {
     alignItems: 'center',
-    borderRadius: 8,
     flex: 1,
-    gap: 3,
+    gap: 8,
+    justifyContent: 'center',
     minWidth: 0,
-    paddingHorizontal: 3,
-    paddingVertical: 4,
+    paddingHorizontal: 2,
+    paddingVertical: 10,
   },
-  programTitle: {
-    fontSize: 12,
+  programIconWrap: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
   },
   monthCalendarCard: {
     gap: 12,

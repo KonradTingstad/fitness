@@ -100,6 +100,7 @@ Ved appstart (`App.tsx`) skjer dette:
 Program-fanen:
 
 - viser `Weekly schedule` basert pa persistert ukesprogram (ikke hardkodet uke)
+- `Weekly schedule` viser ukeintervall i toppen (med forrige/neste uke-knapper) og dag + ikon per celle uten aktivitetstekst
 - `Edit program` apner dedikert editor for ukevis planlegging
 - viser `My groups` med lokale workout-grupper
 - grupper kan foldes inn/ut og persisteres lokalt i AsyncStorage
@@ -109,6 +110,7 @@ Program-fanen:
 `EditProgramScreen`:
 
 - ukevis navigasjon (forrige/neste uke) med datointervall
+- mer dynamisk uke-hero med tydelig aktiv uke, raske uke-knapper og visuell status
 - viser 7 dager for valgt uke
 - trykk pa dag for `Choose activity`-picker
 - aktivitetstyper:
@@ -436,6 +438,11 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-27: `Edit program`-UI er polert med mer levende ukeheader, rikere dagrader (aktivitetschips/meta), subtile aktivitetstoner og en mer dashboard-preget Program Summary, uten funksjonelle endringer i lagring/flyt.
+- 2026-04-27: Program-tab `Weekly schedule` viser na valgt ukeintervall i header med forrige/neste uke-knapper, og cellene er forenklet til kun dag + ikon for jevnere lesbarhet.
+- 2026-04-27: Justert Program-tab `Weekly schedule` til dag/dato + ikon per celle (aktivitetstekst under ikonene er fjernet, men dato/info er beholdt).
+- 2026-04-27: Oppdatert aktivitetsikoner i Program-flyt til innebygde Lucide-ikoner for enklere vedlikehold: `Padel` bruker `Volleyball` og `Cardio` bruker `HeartPulse`, konsistent i bade Program-kort og `Edit program`.
+- 2026-04-27: Program-tab `Weekly schedule` er redesignet med ikonfokus og jevn cellestil for bedre lesbarhet.
 - 2026-04-27: Implementert full `Edit program`-flyt i Workouts > Program med dedikert editor-skjerm, ukevis navigasjon, 7-dagers planlegging, aktivitetsvelger (styrkerutiner + Cardio/Padel/Golf/Rest/Recovery), ny persistering i `workout_program_days` og kobling tilbake til `Weekly schedule`-kortet.
 - 2026-04-24: Workouts er oppdatert med ny Today-layout/streak-logikk, grupperte Program-templates i 2-kolonne grid, fast hoyde pa History-kalenderen med Month/Year/Multi-year, intern scroll for Year/Multi-year, Year-grid med 3 kolonner og nyeste rekke nederst, Month-sperre mot fremtid, separat nyeste-anker for Year/Multi-year, manedslabels i Multi-year, cache/prefetch for kalenderbytte og felles gronn toppfade via `AppBackground`.
 - 2026-04-24: Nutrition `Diary` er redesignet som en mer dynamisk dashboard-layout med kalorikort, arc-progress, macro-progress og separate maltidskort i Workouts-stil.

@@ -65,6 +65,8 @@ export function useProgramScheduleForRange(startLocalDate: string, endLocalDate:
   return useQuery({
     queryKey: queryKeys.programSchedule(startLocalDate, endLocalDate),
     queryFn: () => listProgramScheduleForRange(startLocalDate, endLocalDate),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
   });
 }
 

@@ -1,9 +1,9 @@
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, format, startOfWeek } from 'date-fns';
-import { Calendar, Check, ChevronLeft, ChevronRight, Circle, Dumbbell, Flag, Heart, Minus, X } from 'lucide-react-native';
+import { Calendar, Check, ChevronLeft, ChevronRight, Circle, Clock, X } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, LayoutAnimation, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { Button } from '@/components/Button';
@@ -19,6 +19,7 @@ import {
 import { toLocalDateKey } from '@/domain/calculations/dates';
 import { useProgramScheduleForRange, useRoutines } from '@/hooks/useAppQueries';
 import { RootStackParamList } from '@/navigation/types';
+import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { useAppTheme } from '@/theme/theme';
 
 type Route = RouteProp<RootStackParamList, 'EditProgram'>;
@@ -119,9 +120,17 @@ export function EditProgramScreen() {
       rest: weekDays.filter((day) => day.activityType === 'rest' || day.activityType === 'recovery').length,
     };
   }, [weekDays]);
+  const activeDays = useMemo(() => weekDays.filter((day) => day.activityType !== 'rest').length, [weekDays]);
 
   const weekLabel = useMemo(() => `Week ${format(weekStart, 'w')}`, [weekStart]);
   const weekRangeLabel = useMemo(() => `${format(weekStart, 'd MMM')} – ${format(weekEnd, 'd MMM')}`, [weekEnd, weekStart]);
+  const animateLayout = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  };
+  const shiftWeek = (direction: -1 | 1) => {
+    animateLayout();
+    setWeekStart((current) => addDays(current, direction * 7));
+  };
 
   const handleSelectActivity = async (option: ActivityOption) => {
     if (!editingDay) {
@@ -136,6 +145,7 @@ export function EditProgramScreen() {
         routineId: option.activityType === 'strength' ? option.routineId ?? null : null,
         estimatedDurationMinutes: option.estimatedDurationMinutes,
       });
+      animateLayout();
       setEditingDay(null);
     } catch (error) {
       Alert.alert('Save program', error instanceof Error ? error.message : 'Unable to update day activity.');
@@ -170,39 +180,107 @@ export function EditProgramScreen() {
       </View>
 
       <Card style={styles.weekCard}>
+        <View pointerEvents="none" style={[styles.weekGlowLarge, { backgroundColor: withAlpha(theme.colors.primary, 0.2) }]} />
+        <View pointerEvents="none" style={[styles.weekGlowSmall, { backgroundColor: withAlpha(theme.colors.info, 0.18) }]} />
+
+        <View style={[styles.weekBadge, { borderColor: withAlpha(theme.colors.primary, 0.45), backgroundColor: withAlpha(theme.colors.primary, 0.12) }]}>
+          <Calendar size={13} color={theme.colors.primary} />
+          <AppText variant="small" weight="700" style={{ color: theme.colors.primary }}>
+            Currently editing
+          </AppText>
+        </View>
+
         <View style={styles.weekTopRow}>
           <View style={styles.weekCopy}>
             <AppText variant="section">{weekLabel}</AppText>
-            <AppText muted>{weekRangeLabel}</AppText>
+            <AppText variant="title" style={styles.weekRangeText}>
+              {weekRangeLabel}
+            </AppText>
+            <AppText muted variant="small">
+              {activeDays} active days planned • {summary.rest} recovery/rest days
+            </AppText>
           </View>
-          <View style={styles.weekActions}>
-            <Pressable
-              onPress={() => setWeekStart((current) => addDays(current, -7))}
-              style={({ pressed }) => [styles.weekNavButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.78 : 1 }]}
-            >
-              <ChevronLeft size={18} color={theme.colors.text} />
-            </Pressable>
-            <Pressable
-              onPress={() => setWeekStart((current) => addDays(current, 7))}
-              style={({ pressed }) => [styles.weekNavButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.78 : 1 }]}
-            >
-              <ChevronRight size={18} color={theme.colors.text} />
-            </Pressable>
+        </View>
+
+        <View style={styles.weekActions}>
+          <Pressable
+            onPress={() => shiftWeek(-1)}
+            style={({ pressed }) => [
+              styles.weekNavButton,
+              {
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceAlt,
+                opacity: pressed ? 0.78 : 1,
+                transform: [{ scale: pressed ? 0.97 : 1 }],
+              },
+            ]}
+          >
+            <ChevronLeft size={18} color={theme.colors.text} />
+          </Pressable>
+
+          <View style={[styles.weekRangeBadge, { borderColor: theme.colors.border, backgroundColor: withAlpha(theme.colors.surfaceAlt, 0.9) }]}>
+            <AppText muted variant="small">
+              Tap day to assign activity
+            </AppText>
           </View>
+
+          <Pressable
+            onPress={() => shiftWeek(1)}
+            style={({ pressed }) => [
+              styles.weekNavButton,
+              {
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceAlt,
+                opacity: pressed ? 0.78 : 1,
+                transform: [{ scale: pressed ? 0.97 : 1 }],
+              },
+            ]}
+          >
+            <ChevronRight size={18} color={theme.colors.text} />
+          </Pressable>
         </View>
       </Card>
 
       <Card style={styles.daysCard}>
+        <View style={styles.daysHeader}>
+          <AppText variant="section">Weekly assignments</AppText>
+          <AppText muted variant="small">
+            Tap any day to edit
+          </AppText>
+        </View>
         {weekDays.map((day, index) => {
-          const icon = activityVisual(day.activityType, theme.colors.primary, theme.colors.warning, theme.colors.info, theme.colors.muted);
+          const icon = activityVisual(
+            day.activityType,
+            theme.colors.primary,
+            theme.colors.warning,
+            theme.colors.info,
+            theme.colors.muted,
+            theme.colors.accent,
+          );
+          const tone = activityTone(
+            day.activityType,
+            theme.colors.primary,
+            theme.colors.warning,
+            theme.colors.info,
+            theme.colors.muted,
+            theme.colors.accent,
+          );
           return (
             <Pressable
               key={day.localDate}
-              onPress={() => setEditingDay(day)}
+              onPress={() => {
+                animateLayout();
+                setEditingDay(day);
+              }}
               style={({ pressed }) => [
                 styles.dayRow,
-                index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border },
-                { opacity: pressed ? 0.82 : 1 },
+                {
+                  borderColor: withAlpha(tone.accent, 0.45),
+                  backgroundColor: withAlpha(tone.accent, 0.09),
+                  marginTop: index === 0 ? 0 : 8,
+                  opacity: pressed ? 0.82 : 1,
+                  transform: [{ scale: pressed ? 0.988 : 1 }],
+                },
               ]}
             >
               <View style={styles.dayDateCol}>
@@ -214,35 +292,70 @@ export function EditProgramScreen() {
                 </AppText>
               </View>
 
+              <View style={[styles.dayAccent, { backgroundColor: withAlpha(tone.accent, 0.7) }]} />
+
               <View style={styles.dayActivityCol}>
-                <View style={[styles.activityIconWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                <View style={[styles.activityIconWrap, { borderColor: withAlpha(tone.accent, 0.55), backgroundColor: withAlpha(tone.accent, 0.16) }]}>
                   {icon}
                 </View>
                 <View style={styles.dayActivityCopy}>
-                  <AppText weight="800">{day.title}</AppText>
+                  <View style={styles.dayTitleRow}>
+                    <AppText weight="800" numberOfLines={1} style={styles.dayTitle}>
+                      {day.title}
+                    </AppText>
+                    <View style={[styles.activityTypePill, { borderColor: withAlpha(tone.accent, 0.45), backgroundColor: withAlpha(tone.accent, 0.15) }]}>
+                      <AppText variant="small" weight="700" style={{ color: tone.accent }}>
+                        {tone.label}
+                      </AppText>
+                    </View>
+                  </View>
+
                   <AppText muted variant="small" numberOfLines={1}>
                     {day.subtitle}
                   </AppText>
+
+                  <View style={styles.dayMetaRow}>
+                    <View style={[styles.dayMetaPill, { borderColor: theme.colors.border, backgroundColor: withAlpha(theme.colors.surface, 0.75) }]}>
+                      <Clock size={11} color={theme.colors.muted} />
+                      <AppText muted variant="small">
+                        {day.estimatedDurationMinutes > 0 ? `~${day.estimatedDurationMinutes} min` : 'Recovery focus'}
+                      </AppText>
+                    </View>
+                    {day.activityType === 'strength' ? (
+                      <View style={[styles.dayMetaPill, { borderColor: withAlpha(theme.colors.primary, 0.45), backgroundColor: withAlpha(theme.colors.primary, 0.12) }]}>
+                        <AppText variant="small" weight="700" style={{ color: theme.colors.primary }}>
+                          {day.exerciseCount} exercises
+                        </AppText>
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
               </View>
 
-              <ChevronRight size={18} color={theme.colors.muted} />
+              <View style={[styles.dayChevronWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+                <ChevronRight size={16} color={theme.colors.muted} />
+              </View>
             </Pressable>
           );
         })}
       </Card>
 
-      <Card>
+      <Card style={styles.summaryCard}>
         <View style={styles.summaryHeader}>
-          <AppText variant="section">Program summary</AppText>
-          <Calendar size={16} color={theme.colors.muted} />
+          <View style={styles.summaryHeaderCopy}>
+            <AppText variant="section">Program summary</AppText>
+            <AppText muted variant="small">
+              Snapshot for {weekRangeLabel}
+            </AppText>
+          </View>
+          <View style={[styles.summaryCalendarWrap, { borderColor: theme.colors.border, backgroundColor: withAlpha(theme.colors.surfaceAlt, 0.82) }]}>
+            <Calendar size={16} color={theme.colors.muted} />
+          </View>
         </View>
         <View style={styles.summaryRow}>
-          <SummaryMetric label="Workouts" value={summary.strength} />
-          <View style={[styles.summaryDivider, { backgroundColor: theme.colors.border }]} />
-          <SummaryMetric label="Cardio" value={summary.cardio} />
-          <View style={[styles.summaryDivider, { backgroundColor: theme.colors.border }]} />
-          <SummaryMetric label="Rest days" value={summary.rest} />
+          <SummaryMetric label="Strength" value={summary.strength} activityType="strength" />
+          <SummaryMetric label="Cardio" value={summary.cardio} activityType="cardio" />
+          <SummaryMetric label="Recovery" value={summary.rest} activityType="rest" />
         </View>
       </Card>
 
@@ -259,17 +372,22 @@ export function EditProgramScreen() {
   );
 }
 
-function SummaryMetric({ label, value }: { label: string; value: number }) {
+function SummaryMetric({ label, value, activityType }: { label: string; value: number; activityType: ProgramActivityType }) {
+  const theme = useAppTheme();
+  const tone = activityTone(activityType, theme.colors.primary, theme.colors.warning, theme.colors.info, theme.colors.muted, theme.colors.accent);
   return (
-    <View style={styles.summaryMetric}>
-      <AppText muted variant="small">
+    <View style={[styles.summaryMetric, { borderColor: withAlpha(tone.accent, 0.45), backgroundColor: withAlpha(tone.accent, 0.1) }]}>
+      <View style={[styles.summaryMetricIconWrap, { borderColor: withAlpha(tone.accent, 0.45), backgroundColor: withAlpha(tone.accent, 0.14) }]}>
+        <ProgramActivityIcon activityType={activityType} color={tone.accent} size={14} />
+      </View>
+      <AppText muted variant="small" numberOfLines={1}>
         {label}
       </AppText>
-      <AppText variant="metric" weight="800">
+      <AppText style={styles.summaryMetricValue} weight="800">
         {value}
       </AppText>
       <AppText muted variant="small">
-        per week
+        days/week
       </AppText>
     </View>
   );
@@ -368,20 +486,34 @@ function ActivityOptionRow({
   onPress: () => void;
 }) {
   const theme = useAppTheme();
+  const tone = activityTone(option.activityType, theme.colors.primary, theme.colors.warning, theme.colors.info, theme.colors.muted, theme.colors.accent);
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.optionRow,
-        { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: disabled ? 0.55 : pressed ? 0.82 : 1 },
+        {
+          borderColor: selected ? withAlpha(tone.accent, 0.55) : theme.colors.border,
+          backgroundColor: selected ? withAlpha(tone.accent, 0.12) : theme.colors.surfaceAlt,
+          opacity: disabled ? 0.55 : pressed ? 0.82 : 1,
+        },
       ]}
     >
-      <View style={[styles.optionIconWrap, { borderColor: theme.colors.border }]}> 
-        {activityVisual(option.activityType, theme.colors.primary, theme.colors.warning, theme.colors.info, theme.colors.muted)}
+      <View style={[styles.optionIconWrap, { borderColor: withAlpha(tone.accent, 0.5), backgroundColor: withAlpha(tone.accent, 0.14) }]}>
+        {activityVisual(option.activityType, theme.colors.primary, theme.colors.warning, theme.colors.info, theme.colors.muted, theme.colors.accent)}
       </View>
       <View style={styles.optionCopy}>
-        <AppText weight="800">{option.title}</AppText>
+        <View style={styles.optionTitleRow}>
+          <AppText weight="800" numberOfLines={1} style={styles.optionTitle}>
+            {option.title}
+          </AppText>
+          <View style={[styles.optionTypePill, { borderColor: withAlpha(tone.accent, 0.5), backgroundColor: withAlpha(tone.accent, 0.14) }]}>
+            <AppText variant="small" weight="700" style={{ color: tone.accent }}>
+              {tone.label}
+            </AppText>
+          </View>
+        </View>
         <AppText muted variant="small">
           {option.subtitle}
         </AppText>
@@ -434,23 +566,46 @@ function formatLocalDate(localDate: string, pattern: string): string {
   return format(new Date(`${localDate}T00:00:00`), pattern);
 }
 
-function activityVisual(activityType: ProgramActivityType, primary: string, warning: string, info: string, muted: string) {
-  if (activityType === 'strength') {
-    return <Dumbbell size={16} color={primary} />;
-  }
+function activityVisual(activityType: ProgramActivityType, primary: string, warning: string, info: string, muted: string, accent: string) {
+  const { accent: color } = activityTone(activityType, primary, warning, info, muted, accent);
+  return <ProgramActivityIcon activityType={activityType} color={color} size={16} />;
+}
+
+function activityTone(
+  activityType: ProgramActivityType,
+  primary: string,
+  warning: string,
+  info: string,
+  muted: string,
+  accent: string,
+): { accent: string; label: string } {
   if (activityType === 'cardio') {
-    return <Heart size={16} color={warning} />;
+    return { accent: warning, label: 'Cardio' };
   }
   if (activityType === 'padel') {
-    return <Circle size={16} color={info} />;
+    return { accent: info, label: 'Padel' };
   }
   if (activityType === 'golf') {
-    return <Flag size={16} color={primary} />;
+    return { accent, label: 'Golf' };
+  }
+  if (activityType === 'rest') {
+    return { accent: muted, label: 'Rest' };
   }
   if (activityType === 'recovery') {
-    return <Circle size={16} color={primary} />;
+    return { accent: primary, label: 'Recovery' };
   }
-  return <Minus size={16} color={muted} />;
+  return { accent: primary, label: 'Strength' };
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) {
+    return hex;
+  }
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 const styles = StyleSheet.create({
@@ -476,80 +631,203 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   weekCard: {
-    gap: 10,
+    gap: 12,
+    overflow: 'hidden',
+    position: 'relative',
+    paddingBottom: 14,
+  },
+  weekGlowLarge: {
+    borderRadius: 999,
+    height: 180,
+    position: 'absolute',
+    right: -72,
+    top: -76,
+    width: 180,
+  },
+  weekGlowSmall: {
+    borderRadius: 999,
+    height: 112,
+    left: -36,
+    position: 'absolute',
+    top: 34,
+    width: 112,
+  },
+  weekBadge: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 24,
+    paddingHorizontal: 10,
+  },
+  weekRangeText: {
+    fontSize: 24,
+    lineHeight: 28,
   },
   weekTopRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
-    justifyContent: 'space-between',
   },
   weekCopy: {
-    gap: 3,
+    flex: 1,
+    gap: 4,
   },
   weekActions: {
+    alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
   },
   weekNavButton: {
     alignItems: 'center',
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 36,
+    height: 40,
     justifyContent: 'center',
-    width: 36,
+    width: 40,
+  },
+  weekRangeBadge: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: 12,
   },
   daysCard: {
-    paddingHorizontal: 0,
-    paddingVertical: 0,
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  daysHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   dayRow: {
     alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
     paddingHorizontal: 12,
-    paddingVertical: 11,
+    paddingVertical: 12,
   },
   dayDateCol: {
-    minWidth: 54,
+    minWidth: 58,
   },
   dayName: {
     fontSize: 14,
+    letterSpacing: 0.2,
+  },
+  dayAccent: {
+    borderRadius: 999,
+    height: '84%',
+    width: 2,
   },
   dayActivityCol: {
     alignItems: 'center',
     flex: 1,
     flexDirection: 'row',
-    gap: 10,
+    gap: 11,
   },
   activityIconWrap: {
     alignItems: 'center',
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 30,
+    height: 34,
     justifyContent: 'center',
-    width: 30,
+    width: 34,
   },
   dayActivityCopy: {
     flex: 1,
-    gap: 2,
+    gap: 4,
+  },
+  dayTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  dayTitle: {
+    flex: 1,
+  },
+  activityTypePill: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 18,
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+  },
+  dayMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dayMetaPill: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 18,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  dayChevronWrap: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 26,
+    justifyContent: 'center',
+    width: 26,
+  },
+  summaryCard: {
+    gap: 10,
   },
   summaryHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  summaryRow: {
+  summaryHeaderCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  summaryCalendarWrap: {
     alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  summaryRow: {
     flexDirection: 'row',
-    marginTop: 8,
+    gap: 8,
   },
   summaryMetric: {
+    alignItems: 'flex-start',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     flex: 1,
-    gap: 3,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
   },
-  summaryDivider: {
-    height: 54,
-    width: StyleSheet.hairlineWidth,
+  summaryMetricIconWrap: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  summaryMetricValue: {
+    fontSize: 22,
+    lineHeight: 24,
   },
   modalRoot: {
     flex: 1,
@@ -624,6 +902,22 @@ const styles = StyleSheet.create({
   optionCopy: {
     flex: 1,
     gap: 2,
+  },
+  optionTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  optionTitle: {
+    flex: 1,
+  },
+  optionTypePill: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 18,
+    justifyContent: 'center',
+    paddingHorizontal: 7,
   },
   optionCheck: {
     alignItems: 'center',

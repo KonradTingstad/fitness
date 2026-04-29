@@ -22,6 +22,7 @@ import {
   Search,
   SlidersHorizontal,
   Star,
+import { DateNavigator } from '@/components/DateNavigator';
 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -534,14 +535,16 @@ export function WorkoutDashboardScreen() {
   const historyCalendarAnchor = historyCalendarMode === 'month' ? historyMonth : today;
   const historyYear = historyCalendarAnchor.getFullYear();
   const historyCalendarRange = getHistoryCalendarRange(historyCalendarAnchor, historyCalendarMode);
-  const canGoToNextHistoryMonth = monthTimestamp(historyMonth) < monthTimestamp(today);
-  const weekLabel = `Week of ${format(weekStart, 'd MMM')}`;
-  const programWeekLabel = `Week ${format(programWeekStart, 'w')}`;
+  const [selectedDate, setSelectedDate] = useState(() => todayKey);
+  const selectedDateObj = new Date(`${selectedDate}T00:00:00`);
+  const weekStart = startOfWeek(selectedDateObj, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(selectedDateObj, { weekStartsOn: 1 });
+  const planRangeEnd = selectedDate;
   const programWeekRangeLabel = `${format(programWeekStart, 'd MMM')} – ${format(programWeekEnd, 'd MMM')}`;
 
   const routines = useRoutines();
   const recent = useRecentWorkouts();
-  const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
+  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, selectedDate);
   const programSchedule = useProgramScheduleForRange(programWeekStartKey, programWeekEndKey);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRange.startLocalDate, historyCalendarRange.endLocalDate);
@@ -693,9 +696,9 @@ export function WorkoutDashboardScreen() {
               styles.tabItem,
               { borderBottomColor: activeTab ? theme.colors.primary : 'transparent', opacity: pressed ? 0.82 : 1 },
             ]}
-          >
-            <AppText weight={activeTab ? '800' : '600'} style={{ color: activeTab ? theme.colors.primary : theme.colors.muted }}>
-              {item.label}
+  const selectedProgramDay = buildProgramDay(selectedDateObj, thisWeekScheduleMap, routineList);
+  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(selectedDateObj, -index), streakScheduleMap, routineList));
+  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, selectedDate, nonStrengthOutcomesByDate);
             </AppText>
           </Pressable>
         );
@@ -994,29 +997,29 @@ export function WorkoutDashboardScreen() {
             </View>
             <View>
               <AppText weight="800" style={styles.suggestedTitle}>
-                {isRestToday ? 'Rest day' : workoutTitle}
-              </AppText>
-              <AppText muted>
-                {isRestToday ? 'No workout planned today' : `${workoutExerciseCount} exercises • ~${workoutDuration} min`}
-              </AppText>
-            </View>
-          </View>
-          {!isRestToday ? (
-            <Button
-              label={activeToday ? 'View workout' : 'Start workout'}
-              icon={Play}
-              onPress={() => {
-                if (activeToday) {
-                  openLiveWorkout(activeToday.id);
-                  return;
-                }
-                if (isPlannedToday && todayProgramDay.routineId) {
-                  startRoutine.mutate(todayProgramDay.routineId);
-                  return;
-                }
-                if (topRoutine) {
-                  startRoutine.mutate(topRoutine.id);
-                  return;
+    const selectedSessions = groupedSessions.get(selectedDate) ?? [];
+    const activeToday = selectedSessions.find(
+      (session) => session.status === 'active' && (selectedProgramDay.type === 'rest' || workoutMatchesProgramDay(session, selectedProgramDay)),
+    const isRestToday = selectedProgramDay.type === 'rest';
+    const isPlannedToday = selectedProgramDay.type === 'workout';
+    const isStrengthToday = selectedProgramDay.activityType === 'strength';
+    const topRoutine = selectedProgramDay.routineId
+      ? routineList.find((routine) => routine.id === selectedProgramDay.routineId)
+    const workoutTitle = isPlannedToday ? selectedProgramDay.title : topRoutine?.name ?? 'Empty workout';
+    const workoutExerciseCount = isPlannedToday ? selectedProgramDay.exerciseCount : topRoutine?.exercises.length ?? 0;
+      ? selectedProgramDay.estimatedDurationMinutes
+    const todayNonStrengthStatus = canManuallyTrackToday ? nonStrengthOutcomesByDate.get(selectedDate) : undefined;
+    const todayProgramIconColor = programActivityColor(selectedProgramDay.activityType, theme);
+        ? (selectedDate === todayKey ? "Start today's workout" : 'Start workout')
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
+            <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={20} color={todayProgramIconColor} />
+              <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={24} color={todayProgramIconColor} />
+                  ? (selectedDate === todayKey ? 'No workout planned today' : 'No workout planned for this day')
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'completed' })}
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'missed' })}
+                  if (selectedProgramDay.routineId) {
+                    startRoutine.mutate(selectedProgramDay.routineId);
                 }
                 startEmpty.mutate();
               }}
@@ -1708,6 +1711,7 @@ const styles = StyleSheet.create({
     lineHeight: 28,
   },
   streakDivider: {
+      {tab === 'today' ? <DateNavigator localDate={selectedDate} onChange={setSelectedDate} hint /> : null}
     height: 52,
     width: StyleSheet.hairlineWidth,
   },

@@ -463,3 +463,4 @@ Ekstra ideer finnes i: `To be added.md`.
 - 2026-04-24: Progress er refaktorert til datadrevet widget-dashboard med `Add statistic`-flyt (kategori -> velg metrikk -> konfigurer -> lagre), nye progress-komponenter og persistens i `progress_widgets`.
 - 2026-04-24: Opprettet full `README.md` med komplett appoversikt, funksjonsstatus, arkitektur, setup, sync-beskrivelse, teststatus og vedlikeholdsregel for videre oppdateringer.
 - 2026-04-25: La til manuell one-time Oda private snapshot-importer (`scripts/import-oda-foods.js`), Supabase migrasjon for utvidet `food_items`-schema/soke-funksjon, tester for importer-logikk og dokumentasjon i `docs/ODA_PRIVATE_IMPORT.md`.
+- 2026-04-29: Added compact shared DateNavigator (arrows + swipe) for Workouts > Today and Nutrition > Diary, and wired both screens to selectedDate-driven data updates.

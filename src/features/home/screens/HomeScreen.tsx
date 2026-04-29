@@ -1,9 +1,9 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Clock, Droplets, Dumbbell, User, Utensils, Wheat } from 'lucide-react-native';
-import { type ElementRef, useCallback, useRef } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ChevronRight, Clock, Droplets, Dumbbell, Plus, User, Utensils, Wheat, X } from 'lucide-react-native';
+import { type ElementRef, useCallback, useRef, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Animated, {
   Extrapolation,
@@ -20,11 +20,13 @@ import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { LoadingState } from '@/components/LoadingState';
 import { addWater } from '@/data/repositories/nutritionRepository';
-import { startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
+import { ProgramActivityType, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
 import { toLocalDateKey } from '@/domain/calculations/dates';
-import { useDashboard, useRoutines } from '@/hooks/useAppQueries';
+import { Routine } from '@/domain/models';
+import { useDashboard, useProgramScheduleForRange, useRoutines } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
+import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
 import { useAppTheme } from '@/theme/theme';
@@ -122,6 +124,41 @@ function getOverviewTitle(displayName?: string | null): string {
   return `Good morning, ${firstName}.`;
 }
 
+function formatMuscleGroup(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ');
+}
+
+function routineSummary(routine: Routine): string {
+  const groups = Array.from(
+    new Set(
+      routine.exercises
+        .map((item) => item.exercise?.primaryMuscle)
+        .filter((muscle): muscle is string => Boolean(muscle))
+        .map(formatMuscleGroup),
+    ),
+  );
+  if (groups.length > 0) {
+    return groups.slice(0, 3).join(', ');
+  }
+  return `${routine.exercises.length} exercises`;
+}
+
+function activityColor(activityType: ProgramActivityType, warning: string, info: string, muted: string, primary: string): string {
+  if (activityType === 'cardio') {
+    return warning;
+  }
+  if (activityType === 'padel') {
+    return info;
+  }
+  if (activityType === 'rest') {
+    return muted;
+  }
+  return primary;
+}
+
 export function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -131,6 +168,9 @@ export function HomeScreen() {
   const workoutBottomPadding = useWorkoutOverlayPadding(120);
   const dashboard = useDashboard();
   const routines = useRoutines();
+  const todayLocalDate = toLocalDateKey();
+  const programSchedule = useProgramScheduleForRange(todayLocalDate, todayLocalDate);
+  const [startSheetVisible, setStartSheetVisible] = useState(false);
   const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
   const scrollY = useSharedValue(0);
 
@@ -146,6 +186,7 @@ export function HomeScreen() {
   const startWorkout = useMutation({
     mutationFn: async (routineId?: string) => (routineId ? startWorkoutFromRoutine(routineId) : startEmptyWorkout()),
     onSuccess: (sessionId) => {
+      setStartSheetVisible(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.activeWorkout });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       openLiveWorkout(sessionId);
@@ -213,7 +254,7 @@ export function HomeScreen() {
     ],
   }));
 
-  if (dashboard.isLoading || !dashboard.data) {
+  if (dashboard.isLoading || !dashboard.data || programSchedule.isLoading) {
     return <LoadingState label="Building dashboard" />;
   }
 
@@ -236,49 +277,39 @@ export function HomeScreen() {
   const carbProgress = carbTarget <= 0 ? 0 : Math.min(1, Math.max(0, carbs / carbTarget));
   const fatProgress = fatTarget <= 0 ? 0 : Math.min(1, Math.max(0, fat / fatTarget));
   const headerTitle = getOverviewTitle(data.userDisplayName);
-
-  const openPlan = () => {
-    if (!data.todayPlan) {
-      return;
-    }
-    if (data.todayPlan.action === 'start') {
-      startWorkout.mutate(data.todayPlan.routineId);
-      return;
-    }
-    if (!data.todayPlan.sessionId) {
-      return;
-    }
-    if (data.todayPlan.action === 'view_summary') {
-      navigation.navigate('WorkoutSummary', { sessionId: data.todayPlan.sessionId });
-      return;
-    }
-    openLiveWorkout(data.todayPlan.sessionId);
+  const todaysActivity = programSchedule.data?.[0] ?? null;
+  const isStrengthPlan = todaysActivity?.activityType === 'strength';
+  const plannedRoutine = todaysActivity?.routineId ? routines.data?.find((routine) => routine.id === todaysActivity.routineId) ?? null : null;
+  const plannedExercisePreview = plannedRoutine?.exercises
+    .slice(0, 3)
+    .map((item) => item.exercise?.name)
+    .filter((name): name is string => Boolean(name)) ?? [];
+  const activityIconColor = todaysActivity
+    ? activityColor(todaysActivity.activityType, theme.colors.warning, theme.colors.info, theme.colors.muted, theme.colors.primary)
+    : theme.colors.muted;
+  const openStartSheet = () => setStartSheetVisible(true);
+  const closeStartSheet = () => setStartSheetVisible(false);
+  const startFromRoutine = (routineId: string) => {
+    closeStartSheet();
+    startWorkout.mutate(routineId);
   };
-
-  const startAction = () => {
+  const startEmptyFromSheet = () => {
+    closeStartSheet();
     startWorkout.mutate(undefined);
   };
-
-  const fallbackRoutine = routines.data?.[0];
-  const todayPlan = data.todayPlan
-    ? {
-        workoutName: data.todayPlan.workoutName,
-        time: data.todayPlan.time ?? '18:00',
-        exerciseCount: data.todayPlan.exerciseCount,
-        estimatedDurationMinutes: data.todayPlan.estimatedDurationMinutes,
-        actionLabel: data.todayPlan.action === 'start' ? 'Start workout' : 'View workout',
-        onPress: openPlan,
-      }
-    : fallbackRoutine
-      ? {
-          workoutName: fallbackRoutine.name,
-          time: '18:00',
-          exerciseCount: fallbackRoutine.exercises.length,
-          estimatedDurationMinutes: Math.max(30, fallbackRoutine.exercises.length * 12),
-          actionLabel: 'Start workout',
-          onPress: () => startWorkout.mutate(fallbackRoutine.id),
-        }
-      : null;
+  const startPlannedStrengthWorkout = () => {
+    if (!todaysActivity || todaysActivity.activityType !== 'strength') {
+      return;
+    }
+    if (todaysActivity.routineId) {
+      startWorkout.mutate(todaysActivity.routineId);
+      return;
+    }
+    if (plannedRoutine?.id) {
+      startWorkout.mutate(plannedRoutine.id);
+    }
+  };
+  const openWorkoutsPlan = () => navigation.navigate('MainTabs', { screen: 'Workouts' });
 
   const waterProgress = data.goals.waterTargetMl <= 0 ? 0 : Math.min(1, Math.max(0, data.today.waterMl / data.goals.waterTargetMl));
 
@@ -488,7 +519,7 @@ export function HomeScreen() {
             </View>
 
             <View style={styles.actionRow}>
-              <Button label="Start empty workout" icon={Dumbbell} onPress={startAction} style={styles.actionButton} />
+              <Button label="Start workout" icon={Dumbbell} onPress={openStartSheet} style={styles.actionButton} disabled={startWorkout.isPending} />
               <Button
                 label="Log meal"
                 icon={Utensils}
@@ -498,42 +529,62 @@ export function HomeScreen() {
             </View>
 
             <Card style={styles.planCard}>
-              <AppText style={styles.sectionTitle}>Today&apos;s plan</AppText>
-              {todayPlan ? (
+              <View style={styles.planHeaderRow}>
+                <AppText style={styles.sectionTitle}>Today&apos;s plan</AppText>
+                <Pressable onPress={openWorkoutsPlan} style={({ pressed }) => [styles.planHeaderAction, { opacity: pressed ? 0.78 : 1 }]}>
+                  <AppText style={{ color: theme.colors.primary }} weight="800">View plan</AppText>
+                  <ChevronRight size={16} color={theme.colors.primary} />
+                </Pressable>
+              </View>
+              {todaysActivity ? (
                 <>
                   <View style={styles.planContentRow}>
                     <View style={[styles.planIconWrap, { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border }]}>
-                      <Dumbbell size={20} color={theme.colors.primary} />
+                      <ProgramActivityIcon activityType={todaysActivity.activityType} size={20} color={activityIconColor} />
                     </View>
                     <View style={styles.planCopy}>
-                      <AppText style={styles.planName}>{todayPlan.workoutName}</AppText>
+                      <AppText style={styles.planName}>{todaysActivity.title}</AppText>
                       <View style={styles.planMetaRow}>
                         <Clock size={14} color={theme.colors.muted} />
-                        <AppText muted variant="small">{todayPlan.time}</AppText>
+                        <AppText muted variant="small">~{todaysActivity.estimatedDurationMinutes} min</AppText>
                         <AppText muted variant="small">•</AppText>
-                        <AppText muted variant="small">{todayPlan.exerciseCount} exercises</AppText>
-                        <AppText muted variant="small">•</AppText>
-                        <AppText muted variant="small">Est. {todayPlan.estimatedDurationMinutes} min</AppText>
+                        <AppText muted variant="small">
+                          {isStrengthPlan ? `${todaysActivity.exerciseCount} exercises` : 'Planned activity'}
+                        </AppText>
                       </View>
+                      {isStrengthPlan && plannedExercisePreview.length ? (
+                        <AppText muted variant="small">{plannedExercisePreview.join(' • ')}</AppText>
+                      ) : null}
                     </View>
                   </View>
-
-                  <Pressable
-                    onPress={todayPlan.onPress}
-                    style={({ pressed }) => [
-                      styles.planAction,
-                      { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, opacity: pressed ? 0.84 : 1 },
-                    ]}
-                  >
-                    <AppText style={{ color: theme.colors.primary }} weight="800">{todayPlan.actionLabel}</AppText>
-                    <AppText style={{ color: theme.colors.primary }} weight="800">›</AppText>
-                  </Pressable>
+                  {isStrengthPlan ? (
+                    <Pressable
+                      disabled={startWorkout.isPending}
+                      onPress={startPlannedStrengthWorkout}
+                      style={({ pressed }) => [
+                        styles.planAction,
+                        {
+                          backgroundColor: theme.colors.surfaceAlt,
+                          borderColor: theme.colors.border,
+                          opacity: startWorkout.isPending ? 0.6 : pressed ? 0.84 : 1,
+                        },
+                      ]}
+                    >
+                      <AppText style={{ color: theme.colors.primary }} weight="800">Start today&apos;s workout</AppText>
+                      <AppText style={{ color: theme.colors.primary }} weight="800">›</AppText>
+                    </Pressable>
+                  ) : (
+                    <View style={[styles.nonStrengthNotice, { borderColor: theme.colors.border }]}>
+                      <View style={[styles.planDot, { backgroundColor: theme.colors.primary }]} />
+                      <AppText muted>No strength workout planned today</AppText>
+                    </View>
+                  )}
                 </>
               ) : (
                 <View style={styles.emptyState}>
-                  <AppText weight="800">No workout scheduled</AppText>
+                  <AppText weight="800">No activity scheduled today</AppText>
                   <Button
-                    label="Schedule workout"
+                    label="View workout plan"
                     onPress={() => navigation.navigate('MainTabs', { screen: 'Workouts' })}
                     variant="secondary"
                   />
@@ -566,6 +617,86 @@ export function HomeScreen() {
             </Card>
           </View>
         </Animated.ScrollView>
+
+        <Modal visible={startSheetVisible} transparent animationType="fade" onRequestClose={closeStartSheet}>
+          <View style={styles.sheetOverlay}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeStartSheet} />
+            <View style={[styles.startSheet, { borderColor: theme.colors.border, backgroundColor: 'rgba(17,26,34,0.95)' }]}>
+              <LinearGradient
+                colors={['rgba(255,255,255,0.16)', 'rgba(255,255,255,0.02)', 'rgba(255,255,255,0.01)']}
+                end={{ x: 1, y: 1 }}
+                start={{ x: 0, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.sheetHandle} />
+              <View style={styles.sheetHeaderRow}>
+                <View style={styles.sheetHeaderCopy}>
+                  <AppText style={styles.sheetTitle}>Start workout</AppText>
+                  <AppText muted>Choose a saved workout or start an empty one</AppText>
+                </View>
+                <Pressable
+                  onPress={closeStartSheet}
+                  style={({ pressed }) => [
+                    styles.sheetCloseButton,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.8 : 1 },
+                  ]}
+                >
+                  <X size={16} color={theme.colors.text} />
+                </Pressable>
+              </View>
+
+              <AppText muted weight="700" style={styles.savedTitle}>Saved workouts</AppText>
+              <ScrollView style={styles.sheetList} contentContainerStyle={styles.sheetListContent} showsVerticalScrollIndicator={false}>
+                {(routines.data ?? []).length ? (routines.data ?? []).map((routine) => (
+                  <Pressable
+                    key={routine.id}
+                    disabled={startWorkout.isPending}
+                    onPress={() => startFromRoutine(routine.id)}
+                    style={({ pressed }) => [
+                      styles.sheetRow,
+                      {
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surfaceAlt,
+                        opacity: startWorkout.isPending ? 0.6 : pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    <View style={[styles.sheetRowIcon, { borderColor: theme.colors.primary }]}>
+                      <Dumbbell size={15} color={theme.colors.primary} />
+                    </View>
+                    <View style={styles.sheetRowCopy}>
+                      <AppText style={styles.sheetRowTitle}>{routine.name}</AppText>
+                      <AppText muted variant="small">
+                        {routineSummary(routine)} • {routine.exercises.length} exercises
+                      </AppText>
+                    </View>
+                    <ChevronRight size={18} color={theme.colors.primary} />
+                  </Pressable>
+                )) : (
+                  <View style={[styles.sheetEmptyState, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                    <AppText muted>No saved workouts yet.</AppText>
+                  </View>
+                )}
+              </ScrollView>
+
+              <Pressable
+                disabled={startWorkout.isPending}
+                onPress={startEmptyFromSheet}
+                style={({ pressed }) => [
+                  styles.sheetEmptyAction,
+                  {
+                    borderColor: theme.colors.primary,
+                    backgroundColor: 'rgba(30,215,96,0.08)',
+                    opacity: startWorkout.isPending ? 0.6 : pressed ? 0.84 : 1,
+                  },
+                ]}
+              >
+                <Plus size={20} color={theme.colors.primary} />
+                <AppText weight="800" style={{ color: theme.colors.primary }}>Start empty workout</AppText>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     </SafeAreaView>
   );
@@ -895,6 +1026,16 @@ const styles = StyleSheet.create({
   planCard: {
     gap: 10,
   },
+  planHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  planHeaderAction: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 2,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
@@ -937,6 +1078,20 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingHorizontal: 14,
   },
+  nonStrengthNotice: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  planDot: {
+    borderRadius: 999,
+    height: 7,
+    width: 7,
+  },
   emptyState: {
     gap: 10,
   },
@@ -978,5 +1133,107 @@ const styles = StyleSheet.create({
   progressFill: {
     borderRadius: 8,
     height: '100%',
+  },
+  sheetOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.38)',
+    justifyContent: 'flex-end',
+  },
+  startSheet: {
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+    maxHeight: '76%',
+    minHeight: 420,
+    overflow: 'hidden',
+    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255,255,255,0.48)',
+    borderRadius: 999,
+    height: 5,
+    marginBottom: 4,
+    width: 56,
+  },
+  sheetHeaderRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sheetHeaderCopy: {
+    flex: 1,
+    gap: 4,
+    paddingRight: 10,
+  },
+  sheetTitle: {
+    fontSize: 23,
+    fontWeight: '800',
+    lineHeight: 28,
+  },
+  sheetCloseButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  savedTitle: {
+    marginTop: 2,
+  },
+  sheetList: {
+    flexGrow: 0,
+  },
+  sheetListContent: {
+    gap: 10,
+    paddingBottom: 4,
+  },
+  sheetEmptyState: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 62,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  sheetRow: {
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 76,
+    paddingHorizontal: 12,
+  },
+  sheetRowIcon: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  sheetRowCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  sheetRowTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 18,
+  },
+  sheetEmptyAction: {
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+    minHeight: 58,
+    marginTop: 4,
   },
 });

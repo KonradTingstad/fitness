@@ -22,6 +22,7 @@ import {
   Search,
   SlidersHorizontal,
   Star,
+  X,
 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -34,19 +35,26 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
-import { ProgramScheduleDay, WorkoutPlanItem, listWorkoutSessionsForRange, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
-import { useExercises, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutPlansForRange, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
+import {
+  ProgramActivityType,
+  ProgramDayOutcomeStatus,
+  ProgramScheduleDay,
+  listWorkoutSessionsForRange,
+  startEmptyWorkout,
+  startWorkoutFromRoutine,
+  upsertProgramDayOutcome,
+} from '@/data/repositories/workoutRepository';
+import { useExercises, useProgramDayOutcomesForRange, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
-import { useAppTheme } from '@/theme/theme';
+import { AppTheme, useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type WorkoutTab = 'today' | 'program' | 'history' | 'exercises';
 type ExerciseFilter = 'All' | 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms';
 type ScheduleType = 'workout' | 'rest';
-type ScheduleSource = 'plan' | 'program';
 type AdherenceStatus = 'done' | 'rest' | 'missed' | 'pending' | 'upcoming';
 type HistoryCalendarMode = 'month' | 'year' | 'multiYear';
 
@@ -71,14 +79,14 @@ const HISTORY_YEAR_MONTH_COUNT = 24;
 const HISTORY_MULTI_YEAR_COUNT = 5;
 const HISTORY_CALENDAR_STALE_TIME_MS = 5 * 60 * 1000;
 
-const PROGRAM_WEEK: Array<{ day: string; title: string; type: ScheduleType }> = [
-  { day: 'Mon', title: 'Upper', type: 'workout' },
-  { day: 'Tue', title: 'Rest', type: 'rest' },
-  { day: 'Wed', title: 'Lower', type: 'workout' },
-  { day: 'Thu', title: 'Pull', type: 'workout' },
-  { day: 'Fri', title: 'Rest', type: 'rest' },
-  { day: 'Sat', title: 'Cardio', type: 'workout' },
-  { day: 'Sun', title: 'Recovery', type: 'rest' },
+const PROGRAM_WEEK: Array<{ day: string; title: string; type: ScheduleType; activityType: ProgramActivityType }> = [
+  { day: 'Mon', title: 'Upper', type: 'workout', activityType: 'strength' },
+  { day: 'Tue', title: 'Rest', type: 'rest', activityType: 'rest' },
+  { day: 'Wed', title: 'Lower', type: 'workout', activityType: 'strength' },
+  { day: 'Thu', title: 'Pull', type: 'workout', activityType: 'strength' },
+  { day: 'Fri', title: 'Rest', type: 'rest', activityType: 'rest' },
+  { day: 'Sat', title: 'Cardio', type: 'workout', activityType: 'cardio' },
+  { day: 'Sun', title: 'Recovery', type: 'rest', activityType: 'recovery' },
 ];
 
 const EMPTY_ROUTINES: Routine[] = [];
@@ -88,12 +96,11 @@ interface ProgramDay {
   localDate: string;
   day: string;
   title: string;
+  activityType: ProgramActivityType;
   type: ScheduleType;
-  source: ScheduleSource;
   routineId?: string;
   exerciseCount: number;
   estimatedDurationMinutes: number;
-  scheduledTime?: string | null;
 }
 
 interface Adherence {
@@ -413,22 +420,30 @@ function findRoutineForTemplate(templateTitle: string, routines: Routine[]): Rou
   });
 }
 
-function buildProgramDay(date: Date, planMap: Map<string, WorkoutPlanItem>, routines: Routine[]): ProgramDay {
+function mapScheduleType(scheduleDay: ProgramScheduleDay): ScheduleType {
+  return scheduleDay.activityType === 'rest' || scheduleDay.activityType === 'recovery' ? 'rest' : 'workout';
+}
+
+function buildProgramDayFromSchedule(scheduleDay: ProgramScheduleDay): ProgramDay {
+  const date = new Date(`${scheduleDay.localDate}T00:00:00`);
+  return {
+    date,
+    localDate: scheduleDay.localDate,
+    day: format(date, 'EEE'),
+    title: scheduleDay.title,
+    activityType: scheduleDay.activityType,
+    type: mapScheduleType(scheduleDay),
+    routineId: scheduleDay.routineId ?? undefined,
+    exerciseCount: scheduleDay.exerciseCount,
+    estimatedDurationMinutes: scheduleDay.estimatedDurationMinutes,
+  };
+}
+
+function buildProgramDay(date: Date, scheduleMap: Map<string, ProgramScheduleDay>, routines: Routine[]): ProgramDay {
   const localDate = localDateKey(date);
-  const plan = planMap.get(localDate);
-  if (plan) {
-    return {
-      date,
-      localDate,
-      day: format(date, 'EEE'),
-      title: plan.workoutName,
-      type: 'workout',
-      source: 'plan',
-      routineId: plan.routineId,
-      exerciseCount: plan.exerciseCount,
-      estimatedDurationMinutes: plan.estimatedDurationMinutes,
-      scheduledTime: plan.scheduledTime,
-    };
+  const scheduleDay = scheduleMap.get(localDate);
+  if (scheduleDay) {
+    return buildProgramDayFromSchedule(scheduleDay);
   }
 
   const template = templateForDate(date);
@@ -438,8 +453,8 @@ function buildProgramDay(date: Date, planMap: Map<string, WorkoutPlanItem>, rout
     localDate,
     day: template.day,
     title: template.title,
+    activityType: template.activityType,
     type: template.type,
-    source: 'program',
     routineId: routine?.id,
     exerciseCount: routine?.exercises.length ?? 0,
     estimatedDurationMinutes: routine ? Math.max(35, routine.exercises.length * 10) : 40,
@@ -462,7 +477,7 @@ function workoutMatchesProgramDay(session: WorkoutSession, day: ProgramDay): boo
   return true;
 }
 
-function getAdherence(day: ProgramDay, sessions: WorkoutSession[], todayKey: string): Adherence {
+function getAdherence(day: ProgramDay, sessions: WorkoutSession[], todayKey: string, nonStrengthStatus?: ProgramDayOutcomeStatus): Adherence {
   if (day.localDate > todayKey) {
     return { status: 'upcoming', label: 'Upcoming', followed: false, tone: 'muted' };
   }
@@ -479,16 +494,45 @@ function getAdherence(day: ProgramDay, sessions: WorkoutSession[], todayKey: str
   if (completedPlan) {
     return { status: 'done', label: 'Done', followed: true, tone: 'good' };
   }
+  if (day.activityType !== 'strength') {
+    if (nonStrengthStatus === 'completed') {
+      return { status: 'done', label: 'Done', followed: true, tone: 'good' };
+    }
+    if (nonStrengthStatus === 'missed') {
+      return { status: 'missed', label: 'Missed', followed: false, tone: 'bad' };
+    }
+  }
   if (day.localDate === todayKey) {
-    return { status: 'pending', label: 'Today', followed: false, tone: 'good' };
+    return { status: 'pending', label: 'Today', followed: false, tone: 'muted' };
   }
   return { status: 'missed', label: 'Missed', followed: false, tone: 'bad' };
 }
 
-function calculateCurrentStreak(daysNewestFirst: ProgramDay[], groupedSessions: Map<string, WorkoutSession[]>, todayKey: string): number {
+function programActivityColor(activityType: ProgramActivityType, theme: AppTheme): string {
+  if (activityType === 'rest') {
+    return theme.colors.muted;
+  }
+  if (activityType === 'cardio') {
+    return theme.colors.warning;
+  }
+  if (activityType === 'padel') {
+    return theme.colors.info;
+  }
+  if (activityType === 'golf' || activityType === 'recovery' || activityType === 'strength') {
+    return theme.colors.primary;
+  }
+  return theme.colors.primary;
+}
+
+function calculateCurrentStreak(
+  daysNewestFirst: ProgramDay[],
+  groupedSessions: Map<string, WorkoutSession[]>,
+  todayKey: string,
+  nonStrengthOutcomesByDate: Map<string, ProgramDayOutcomeStatus>,
+): number {
   let streak = 0;
   for (const day of daysNewestFirst) {
-    const adherence = getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey);
+    const adherence = getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate));
     if (adherence.status === 'pending' || adherence.status === 'upcoming') {
       continue;
     }
@@ -531,6 +575,8 @@ export function WorkoutDashboardScreen() {
   const streakStart = addDays(today, -35);
   const planRangeStart = localDateKey(streakStart);
   const planRangeEnd = localDateKey(weekEnd);
+  const weekStartKey = localDateKey(weekStart);
+  const weekEndKey = localDateKey(weekEnd);
   const historyCalendarAnchor = historyCalendarMode === 'month' ? historyMonth : today;
   const historyYear = historyCalendarAnchor.getFullYear();
   const historyCalendarRange = getHistoryCalendarRange(historyCalendarAnchor, historyCalendarMode);
@@ -541,8 +587,10 @@ export function WorkoutDashboardScreen() {
 
   const routines = useRoutines();
   const recent = useRecentWorkouts();
-  const workoutPlans = useWorkoutPlansForRange(planRangeStart, planRangeEnd);
+  const thisWeekProgramSchedule = useProgramScheduleForRange(weekStartKey, weekEndKey);
+  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, todayKey);
   const programSchedule = useProgramScheduleForRange(programWeekStartKey, programWeekEndKey);
+  const nonStrengthOutcomes = useProgramDayOutcomesForRange(planRangeStart, planRangeEnd);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRange.startLocalDate, historyCalendarRange.endLocalDate);
   const exercises = useExercises();
@@ -636,28 +684,49 @@ export function WorkoutDashboardScreen() {
     },
   });
 
-  if (routines.isLoading || recent.isLoading || workoutPlans.isLoading || programSchedule.isLoading || workoutSessions.isLoading || exercises.isLoading) {
+  const saveProgramDayOutcome = useMutation({
+    mutationFn: (input: { localDate: string; status: ProgramDayOutcomeStatus }) => upsertProgramDayOutcome(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'programDayOutcomes',
+      });
+    },
+  });
+
+  if (
+    routines.isLoading
+    || recent.isLoading
+    || thisWeekProgramSchedule.isLoading
+    || streakProgramSchedule.isLoading
+    || programSchedule.isLoading
+    || nonStrengthOutcomes.isLoading
+    || workoutSessions.isLoading
+    || exercises.isLoading
+  ) {
     return <LoadingState label="Loading workouts" />;
   }
 
   const recentList = recent.data ?? [];
-  const planList = workoutPlans.data ?? [];
   const sessionRange = workoutSessions.data ?? [];
   const historyCalendarSessionRange = historyCalendarSessions.data ?? [];
   const exerciseList = exercises.data ?? [];
+  const thisWeekScheduleDays = thisWeekProgramSchedule.data ?? [];
+  const streakScheduleDays = streakProgramSchedule.data ?? [];
   const weekScheduleDays = programSchedule.data ?? [];
   const suggestedRoutine = routineList[0];
-  const planMap = new Map(planList.map((plan) => [plan.localDate, plan]));
+  const thisWeekScheduleMap = new Map(thisWeekScheduleDays.map((day) => [day.localDate, day]));
+  const streakScheduleMap = new Map(streakScheduleDays.map((day) => [day.localDate, day]));
+  const nonStrengthOutcomesByDate = new Map((nonStrengthOutcomes.data ?? []).map((item) => [item.localDate, item.status]));
   const groupedSessions = sessionsByLocalDate(sessionRange);
   const historyWorkoutsByDate = latestCompletedWorkoutByLocalDate(historyCalendarSessionRange);
   const historyWorkoutCountsByDate = completedWorkoutCountByLocalDate(historyCalendarSessionRange);
   const historyCalendarDays = buildMonthCalendarDays(historyMonth);
   const historyYearMonths = buildHistoryYearMonths(historyCalendarAnchor);
   const historyCalendarYears = Array.from({ length: HISTORY_MULTI_YEAR_COUNT }, (_, index) => historyYear - HISTORY_MULTI_YEAR_COUNT + 1 + index);
-  const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), planMap, routineList));
-  const todayProgramDay = buildProgramDay(today, planMap, routineList);
-  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), planMap, routineList));
-  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, todayKey);
+  const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), thisWeekScheduleMap, routineList));
+  const todayProgramDay = buildProgramDay(today, thisWeekScheduleMap, routineList);
+  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), streakScheduleMap, routineList));
+  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, todayKey, nonStrengthOutcomesByDate);
 
   const workoutsThisWeek = sessionRange.filter((workout) => {
     const startedAt = new Date(workout.startedAt);
@@ -957,8 +1026,9 @@ export function WorkoutDashboardScreen() {
       (session) => session.status === 'active' && (todayProgramDay.type === 'rest' || workoutMatchesProgramDay(session, todayProgramDay)),
     );
     const isRestToday = todayProgramDay.type === 'rest';
-    const isPlannedToday = todayProgramDay.source === 'plan';
-    const topRoutine = isPlannedToday
+    const isPlannedToday = todayProgramDay.type === 'workout';
+    const isStrengthToday = todayProgramDay.activityType === 'strength';
+    const topRoutine = todayProgramDay.routineId
       ? routineList.find((routine) => routine.id === todayProgramDay.routineId)
       : suggestedRoutine;
     const topTitle = isPlannedToday ? "Today's workout" : 'Suggested workout';
@@ -969,14 +1039,22 @@ export function WorkoutDashboardScreen() {
       : topRoutine
         ? Math.max(35, topRoutine.exercises.length * 10)
         : 30;
+    const canManuallyTrackToday = isPlannedToday && !isStrengthToday;
+    const todayNonStrengthStatus = canManuallyTrackToday ? nonStrengthOutcomesByDate.get(todayKey) : undefined;
+    const todayProgramIconColor = programActivityColor(todayProgramDay.activityType, theme);
+    const startButtonLabel = activeToday
+      ? 'View workout'
+      : isStrengthToday
+        ? 'Start todays workout'
+        : 'Start empty workout';
 
-    const firstFive = weekProgramDays.slice(0, 5).map((day) => ({
+    const fullWeek = weekProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
     const streakVisualDays = weekProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
 
     return (
@@ -986,33 +1064,88 @@ export function WorkoutDashboardScreen() {
             <AppText variant="section" style={{ color: theme.colors.primary }}>
               {isRestToday ? "Today's workout" : topTitle}
             </AppText>
-            <Dumbbell size={20} color={theme.colors.primary} />
+            <ProgramActivityIcon activityType={todayProgramDay.activityType} size={20} color={todayProgramIconColor} />
           </View>
           <View style={styles.suggestedRow}>
             <View style={[styles.suggestedIcon, { borderColor: theme.colors.primary }]}>
-              {isRestToday ? <Minus size={24} color={theme.colors.primary} /> : <Dumbbell size={24} color={theme.colors.primary} />}
+              <ProgramActivityIcon activityType={todayProgramDay.activityType} size={24} color={todayProgramIconColor} />
             </View>
             <View>
               <AppText weight="800" style={styles.suggestedTitle}>
                 {isRestToday ? 'Rest day' : workoutTitle}
               </AppText>
               <AppText muted>
-                {isRestToday ? 'No workout planned today' : `${workoutExerciseCount} exercises • ~${workoutDuration} min`}
+                {isRestToday
+                  ? 'No workout planned today'
+                  : isStrengthToday
+                    ? `${workoutExerciseCount} exercises • ~${workoutDuration} min`
+                    : `~${workoutDuration} min planned`}
               </AppText>
             </View>
           </View>
+          {canManuallyTrackToday ? (
+            <View style={styles.outcomeRow}>
+              <AppText muted variant="small">
+                Did you do this activity?
+              </AppText>
+              <View style={styles.outcomeActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={saveProgramDayOutcome.isPending}
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: todayKey, status: 'completed' })}
+                  style={({ pressed }) => [
+                    styles.outcomeButton,
+                    {
+                      borderColor: todayNonStrengthStatus === 'completed' ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: todayNonStrengthStatus === 'completed' ? theme.colors.surfaceAlt : 'transparent',
+                      opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
+                    },
+                  ]}
+                >
+                  <Check size={14} color={theme.colors.primary} />
+                  <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
+                    Completed
+                  </AppText>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={saveProgramDayOutcome.isPending}
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: todayKey, status: 'missed' })}
+                  style={({ pressed }) => [
+                    styles.outcomeButton,
+                    {
+                      borderColor: todayNonStrengthStatus === 'missed' ? theme.colors.danger : theme.colors.border,
+                      backgroundColor: todayNonStrengthStatus === 'missed' ? theme.colors.surfaceAlt : 'transparent',
+                      opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
+                    },
+                  ]}
+                >
+                  <X size={14} color={theme.colors.danger} />
+                  <AppText weight="700" variant="small" style={{ color: theme.colors.danger }}>
+                    Missed
+                  </AppText>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
           {!isRestToday ? (
             <Button
-              label={activeToday ? 'View workout' : 'Start workout'}
+              label={startButtonLabel}
               icon={Play}
               onPress={() => {
                 if (activeToday) {
                   openLiveWorkout(activeToday.id);
                   return;
                 }
-                if (isPlannedToday && todayProgramDay.routineId) {
-                  startRoutine.mutate(todayProgramDay.routineId);
+                if (isPlannedToday && !isStrengthToday) {
+                  startEmpty.mutate();
                   return;
+                }
+                if (isPlannedToday && isStrengthToday) {
+                  if (todayProgramDay.routineId) {
+                    startRoutine.mutate(todayProgramDay.routineId);
+                    return;
+                  }
                 }
                 if (topRoutine) {
                   startRoutine.mutate(topRoutine.id);
@@ -1033,7 +1166,7 @@ export function WorkoutDashboardScreen() {
             </View>
           </View>
           <View style={styles.weekRow}>
-            {firstFive.map(({ day, adherence }, index) => {
+            {fullWeek.map(({ day, adherence }, index) => {
               const StatusIcon = adherence.status === 'done' ? Check : adherence.status === 'rest' || adherence.status === 'missed' ? Minus : Circle;
               const color =
                 adherence.tone === 'good' ? theme.colors.primary : adherence.tone === 'bad' ? theme.colors.danger : theme.colors.muted;
@@ -1048,9 +1181,6 @@ export function WorkoutDashboardScreen() {
                   <View style={[styles.weekStatusIcon, { borderColor: color }]}>
                     <StatusIcon size={16} color={color} />
                   </View>
-                  <AppText weight="700" style={{ color }}>
-                    {adherence.label}
-                  </AppText>
                 </View>
               );
             })}
@@ -1156,18 +1286,7 @@ export function WorkoutDashboardScreen() {
         <View style={styles.programRow}>
           {weekScheduleDays.map((day, index) => {
             const date = new Date(`${day.localDate}T00:00:00`);
-            const iconColor =
-              day.activityType === 'rest'
-                ? theme.colors.muted
-                : day.activityType === 'cardio'
-                  ? theme.colors.warning
-                  : day.activityType === 'padel'
-                    ? theme.colors.info
-                    : day.activityType === 'golf'
-                      ? theme.colors.primary
-                      : day.activityType === 'recovery'
-                        ? theme.colors.primary
-                        : theme.colors.primary;
+            const iconColor = programActivityColor(day.activityType, theme);
             return (
               <View
                 key={day.localDate}
@@ -1657,6 +1776,25 @@ const styles = StyleSheet.create({
   },
   suggestedTitle: {
     fontSize: 16,
+  },
+  outcomeRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  outcomeActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  outcomeButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 30,
+    paddingHorizontal: 10,
   },
   weekLabel: {
     alignItems: 'center',

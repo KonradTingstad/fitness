@@ -26,6 +26,7 @@ import {
   getWorkoutProgress,
   getWorkoutSession,
   listProgramScheduleForRange,
+  listProgramDayOutcomesForRange,
   listWorkoutPlansForRange,
   listWorkoutSessionsForRange,
   listExercises,
@@ -65,6 +66,15 @@ export function useProgramScheduleForRange(startLocalDate: string, endLocalDate:
   return useQuery({
     queryKey: queryKeys.programSchedule(startLocalDate, endLocalDate),
     queryFn: () => listProgramScheduleForRange(startLocalDate, endLocalDate),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+}
+
+export function useProgramDayOutcomesForRange(startLocalDate: string, endLocalDate: string) {
+  return useQuery({
+    queryKey: queryKeys.programDayOutcomes(startLocalDate, endLocalDate),
+    queryFn: () => listProgramDayOutcomesForRange(startLocalDate, endLocalDate),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });

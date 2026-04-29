@@ -107,6 +107,12 @@ type WorkoutProgramDayRow = {
   exercise_count: number | null;
 };
 
+type WorkoutProgramDayOutcomeRow = {
+  id: string;
+  local_date: string;
+  status: ProgramDayOutcomeStatus;
+};
+
 type RoutineSummaryRow = {
   id: string;
   name: string;
@@ -170,6 +176,7 @@ export interface WorkoutPlanItem {
 }
 
 export type ProgramActivityType = 'strength' | 'cardio' | 'padel' | 'golf' | 'rest' | 'recovery';
+export type ProgramDayOutcomeStatus = 'completed' | 'missed';
 
 export interface ProgramScheduleDay {
   id: string;
@@ -183,6 +190,12 @@ export interface ProgramScheduleDay {
   source: 'custom' | 'default';
 }
 
+export interface ProgramDayOutcome {
+  id: string;
+  localDate: string;
+  status: ProgramDayOutcomeStatus;
+}
+
 export interface UpsertProgramScheduleDayInput {
   localDate: string;
   activityType: ProgramActivityType;
@@ -190,6 +203,11 @@ export interface UpsertProgramScheduleDayInput {
   subtitle?: string | null;
   routineId?: string | null;
   estimatedDurationMinutes?: number | null;
+}
+
+export interface UpsertProgramDayOutcomeInput {
+  localDate: string;
+  status: ProgramDayOutcomeStatus;
 }
 
 const PROGRAM_ACTIVITY_DETAILS: Record<Exclude<ProgramActivityType, 'strength'>, { title: string; subtitle: string; estimatedDurationMinutes: number }> = {
@@ -391,6 +409,67 @@ export async function upsertProgramScheduleDay(
       routineId,
       estimatedDurationMinutes,
       metadata,
+      now,
+      now,
+      null,
+      'pending',
+      1,
+    ],
+  );
+}
+
+export async function listProgramDayOutcomesForRange(
+  startLocalDate: string,
+  endLocalDate: string,
+  userId = DEMO_USER_ID,
+): Promise<ProgramDayOutcome[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<WorkoutProgramDayOutcomeRow>(
+    `SELECT id, local_date, status
+     FROM workout_program_day_outcomes
+     WHERE user_id = ?
+       AND local_date BETWEEN ? AND ?
+       AND deleted_at IS NULL
+     ORDER BY local_date ASC`,
+    [userId, startLocalDate, endLocalDate],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    localDate: row.local_date,
+    status: row.status,
+  }));
+}
+
+export async function upsertProgramDayOutcome(
+  input: UpsertProgramDayOutcomeInput,
+  userId = DEMO_USER_ID,
+): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM workout_program_day_outcomes WHERE user_id = ? AND local_date = ? LIMIT 1',
+    [userId, input.localDate],
+  );
+
+  if (existing?.id) {
+    await db.runAsync(
+      `UPDATE workout_program_day_outcomes
+       SET status = ?, updated_at = ?, deleted_at = NULL, sync_status = 'pending', version = version + 1
+       WHERE id = ?`,
+      [input.status, now, existing.id],
+    );
+    return;
+  }
+
+  await db.runAsync(
+    `INSERT INTO workout_program_day_outcomes
+    (id, user_id, local_date, status, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      createId('program_day_outcome'),
+      userId,
+      input.localDate,
+      input.status,
       now,
       now,
       null,

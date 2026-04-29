@@ -242,6 +242,17 @@ CREATE TABLE IF NOT EXISTS workout_program_days (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workout_program_days_user_date ON workout_program_days(user_id, local_date);
 CREATE INDEX IF NOT EXISTS idx_workout_program_days_user_activity ON workout_program_days(user_id, activity_type);
 
+CREATE TABLE IF NOT EXISTS workout_program_day_outcomes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  ${auditColumns},
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workout_program_day_outcomes_user_date ON workout_program_day_outcomes(user_id, local_date);
+CREATE INDEX IF NOT EXISTS idx_workout_program_day_outcomes_user_status ON workout_program_day_outcomes(user_id, status);
+
 CREATE TABLE IF NOT EXISTS workout_sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

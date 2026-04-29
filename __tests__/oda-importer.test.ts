@@ -9,11 +9,14 @@ const {
   buildUpsertPayload,
   dedupeNormalizedProducts,
   discoverProductUrls,
+  extractCaffeineMgPer100Ml,
   extractProductIdFromOdaUrl,
   normalizeNutritionRows,
   normalizeOdaProduct,
+  parseArgs,
   parseDecimalNumber,
   parseEnergyValue,
+  parseVolumeMl,
   parseSitemapXml,
 } = importer;
 
@@ -94,6 +97,31 @@ describe('oda importer helpers', () => {
     expect(parseEnergyValue('67 kcal')).toEqual({ kj: null, kcal: 67 });
   });
 
+  it('parses explicit product ID lists and inspect-count=0', () => {
+    const parsed = parseArgs(['--product-ids=23300,6718,67231', '--inspect-count=0']);
+    expect(parsed.productIds).toEqual(['23300', '6718', '67231']);
+    expect(parsed.limit).toBe(3);
+    expect(parsed.inspectCount).toBe(0);
+  });
+
+  it('parses package volume text to milliliters', () => {
+    expect(parseVolumeMl('0,50 liter')).toBe(500);
+    expect(parseVolumeMl('473 ml')).toBe(473);
+    expect(parseVolumeMl('2 liter')).toBe(2000);
+    expect(parseVolumeMl('n/a')).toBeNull();
+  });
+
+  it('extracts caffeine mg per 100 ml from common labels', () => {
+    expect(
+      extractCaffeineMgPer100Ml(
+        'Høyt koffeininnhold. Anbefales ikke for barn, gravide og personer som ammer (32mg/100ml).',
+      ),
+    ).toBe(32);
+
+    expect(extractCaffeineMgPer100Ml('Ingredienser: koffein (0,03%)', { brand: 'Monster' })).toBe(32);
+    expect(extractCaffeineMgPer100Ml('Ingredienser: koffein (32 mg/l)', { brand: 'Battery' })).toBe(32);
+  });
+
   it('normalizes nutrition rows with norwegian labels', () => {
     const rows = [
       { key: 'Energi', value: '284 kJ / 67 kcal' },
@@ -170,6 +198,7 @@ describe('oda importer helpers', () => {
       saturated_fat_per_100: 1.2,
       fiber_per_100: null,
       salt_per_100: 0.1,
+      caffeine_mg_per_can: 160,
       ingredients: 'milk',
       allergens: 'milk',
       raw_source_data: { id: 36715 },
@@ -187,6 +216,7 @@ describe('oda importer helpers', () => {
       fat_g: 1.8,
       salt_per_100: 0.1,
       sodium_mg: 40,
+      caffeine_mg_per_can: 160,
     });
   });
 

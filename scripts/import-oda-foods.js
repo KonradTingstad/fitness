@@ -23,6 +23,7 @@ const DEFAULT_SAMPLE_INSPECTION_COUNT = 5;
 const MAX_HTTP_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
+const ENERGY_BRANDS_WITH_32_MG_PER_100_ML = new Set(['monster', 'red bull', 'red-bull', 'battery']);
 
 const STOP_THRESHOLDS = {
   status429: 15,
@@ -53,6 +54,25 @@ function parsePositiveInteger(value, fallback = null) {
   return parsed;
 }
 
+function parseNonNegativeInteger(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function parseProductIdsArg(value) {
+  if (!value) return [];
+
+  const ids = String(value)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => /^\d+$/.test(part));
+
+  return Array.from(new Set(ids));
+}
+
 function parseArgs(argv) {
   const parsed = {
     dryRun: false,
@@ -61,6 +81,7 @@ function parseArgs(argv) {
     sample: null,
     limit: null,
     onlyProductId: null,
+    productIds: [],
     delayMs: DEFAULT_DELAY_MS,
     batchSize: DEFAULT_BATCH_SIZE,
     inspectCount: DEFAULT_SAMPLE_INSPECTION_COUNT,
@@ -101,6 +122,10 @@ function parseArgs(argv) {
       }
       continue;
     }
+    if (arg.startsWith('--product-ids=')) {
+      parsed.productIds = parseProductIdsArg(arg.split('=')[1]);
+      continue;
+    }
     if (arg.startsWith('--delay-ms=')) {
       parsed.delayMs = parsePositiveInteger(arg.split('=')[1], DEFAULT_DELAY_MS) ?? DEFAULT_DELAY_MS;
       continue;
@@ -110,7 +135,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg.startsWith('--inspect-count=')) {
-      parsed.inspectCount = parsePositiveInteger(arg.split('=')[1], DEFAULT_SAMPLE_INSPECTION_COUNT) ?? DEFAULT_SAMPLE_INSPECTION_COUNT;
+      parsed.inspectCount =
+        parseNonNegativeInteger(arg.split('=')[1], DEFAULT_SAMPLE_INSPECTION_COUNT) ?? DEFAULT_SAMPLE_INSPECTION_COUNT;
       continue;
     }
     if (arg.startsWith('--sitemap-url=')) {
@@ -123,7 +149,10 @@ function parseArgs(argv) {
   }
 
   if (parsed.onlyProductId) {
+    parsed.productIds = [parsed.onlyProductId];
     parsed.limit = 1;
+  } else if (parsed.productIds.length > 0) {
+    parsed.limit = parsed.productIds.length;
   } else if (parsed.sample) {
     parsed.limit = parsed.sample;
   } else if (!parsed.all && !parsed.limit) {
@@ -149,6 +178,7 @@ function printHelp() {
   console.log('  npm run import:oda-foods -- --limit=500');
   console.log('  npm run import:oda-foods -- --all');
   console.log('  npm run import:oda-foods -- --only-product-id=36715');
+  console.log('  npm run import:oda-foods -- --product-ids=23300,6718,67231 --inspect-count=0');
   console.log('  npm run import:oda-foods -- --resume');
   console.log('');
   console.log('Flags:');
@@ -158,9 +188,10 @@ function printHelp() {
   console.log('  --sample=N           Process first N discovered products (sets limit)');
   console.log('  --limit=N            Process up to N products');
   console.log('  --only-product-id=N  Process one product ID directly');
+  console.log('  --product-ids=A,B,C  Process a comma-separated list of product IDs');
   console.log('  --delay-ms=N         Delay between requests (default 1200)');
   console.log('  --batch-size=N       Supabase upsert batch size (default 40)');
-  console.log('  --inspect-count=N    Number of sampled responses to inspect first (default 5)');
+  console.log('  --inspect-count=N    Number of sampled responses to inspect first (default 5, can be 0)');
   console.log('  --sitemap-url=URL    Override root sitemap URL');
 }
 
@@ -553,6 +584,132 @@ function extractContentValues(contentsRows) {
   return result;
 }
 
+function parseVolumeMl(rawValue) {
+  if (!rawValue) return null;
+  const normalized = String(rawValue).replace(/\u00a0/g, ' ').replace(/,/g, '.').toLowerCase();
+
+  const milliliterMatch = normalized.match(/(\d+(?:\.\d+)?)\s*ml\b/);
+  if (milliliterMatch) {
+    const ml = Number.parseFloat(milliliterMatch[1]);
+    return Number.isFinite(ml) ? ml : null;
+  }
+
+  const literMatch = normalized.match(/(\d+(?:\.\d+)?)\s*l(?:iter)?\b/);
+  if (literMatch) {
+    const liters = Number.parseFloat(literMatch[1]);
+    if (Number.isFinite(liters)) {
+      return liters * 1000;
+    }
+  }
+
+  return null;
+}
+
+function inferVolumeMl(product, contentInfo) {
+  const candidates = [
+    contentInfo?.packageSize,
+    product?.name_extra,
+    product?.full_name,
+    product?.name,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseVolumeMl(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  return null;
+}
+
+function isKnownEnergyBrand(brandName) {
+  if (!brandName) return false;
+  return ENERGY_BRANDS_WITH_32_MG_PER_100_ML.has(String(brandName).trim().toLowerCase());
+}
+
+function extractCaffeineMgPer100Ml(caffeineText, options = {}) {
+  if (!caffeineText) return null;
+
+  const normalized = String(caffeineText).replace(/\u00a0/g, ' ').replace(/,/g, '.').toLowerCase();
+  const brand = options.brand ? String(options.brand).trim() : null;
+  const knownEnergyBrand = isKnownEnergyBrand(brand);
+
+  const explicitPer100MlMatch = normalized.match(
+    /(?:koffein|caffeine)[^.:\n;()]{0,120}\(?(\d+(?:\.\d+)?)\s*mg\s*\/\s*100\s*ml\)?/,
+  );
+  if (explicitPer100MlMatch) {
+    const parsed = Number.parseFloat(explicitPer100MlMatch[1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  if (normalized.includes('koffein') || normalized.includes('caffeine')) {
+    const genericPer100MlMatch = normalized.match(/\b(\d+(?:\.\d+)?)\s*mg\s*\/\s*100\s*ml\b/);
+    if (genericPer100MlMatch) {
+      const parsed = Number.parseFloat(genericPer100MlMatch[1]);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+
+  const explicitPerLiterMatch = normalized.match(
+    /(?:koffein|caffeine)[^.:\n;()]{0,120}\(?(\d+(?:\.\d+)?)\s*mg\s*\/\s*l\)?/,
+  );
+  if (explicitPerLiterMatch) {
+    const perLiter = Number.parseFloat(explicitPerLiterMatch[1]);
+    if (Number.isFinite(perLiter) && perLiter > 0) {
+      if (perLiter <= 100 && knownEnergyBrand) {
+        // Some source feeds have "32 mg/l" typos where label value is actually per 100 ml.
+        return perLiter;
+      }
+      return perLiter / 10;
+    }
+  }
+
+  const explicitPercentMatch = normalized.match(
+    /(?:koffein|caffeine)[^.:\n;()]{0,120}\(?(\d+(?:\.\d+)?)\s*%\)?/,
+  );
+  if (explicitPercentMatch) {
+    const percentage = Number.parseFloat(explicitPercentMatch[1]);
+    if (Number.isFinite(percentage) && percentage > 0) {
+      if (knownEnergyBrand && Math.abs(percentage - 0.03) < 0.0005) {
+        return 32;
+      }
+      return percentage * 1000;
+    }
+  }
+
+  const caffeineMgMatch = normalized.match(
+    /(?:koffein|caffeine)[^.:\n;()]{0,120}\(?(\d+(?:\.\d+)?)\s*mg\b(?!\s*\/)/,
+  );
+  if (caffeineMgMatch) {
+    const caffeineMg = Number.parseFloat(caffeineMgMatch[1]);
+    const volumeMl = options.volumeMl;
+    if (Number.isFinite(caffeineMg) && caffeineMg > 0 && Number.isFinite(volumeMl) && volumeMl > 0) {
+      return (caffeineMg * 100) / volumeMl;
+    }
+  }
+
+  return null;
+}
+
+function extractCaffeineMgPerCan(product, contentInfo, localDetails) {
+  const volumeMl = inferVolumeMl(product, contentInfo);
+  if (!Number.isFinite(volumeMl) || volumeMl <= 0) {
+    return null;
+  }
+
+  const rows = Array.isArray(localDetails?.contents_table?.rows) ? localDetails.contents_table.rows : [];
+  const mergedContentText = rows.map((row) => String(row?.value ?? '')).join('\n');
+  const caffeinePer100Ml = extractCaffeineMgPer100Ml(mergedContentText, {
+    brand: product?.brand,
+    volumeMl,
+  });
+  if (!Number.isFinite(caffeinePer100Ml) || caffeinePer100Ml <= 0) {
+    return null;
+  }
+
+  const caffeineMg = (caffeinePer100Ml * volumeMl) / 100;
+  return Number(caffeineMg.toFixed(1));
+}
+
 function normalizeNutritionRows(nutritionRows) {
   const output = {
     calories_per_100: null,
@@ -744,6 +901,7 @@ function normalizeOdaProduct(product) {
   const nutritionRows = localDetails?.nutrition_info_table?.rows ?? [];
   const nutrition = normalizeNutritionRows(nutritionRows);
   const contentInfo = extractContentValues(localDetails?.contents_table?.rows ?? []);
+  const caffeineMgPerCan = extractCaffeineMgPerCan(product, contentInfo, localDetails);
 
   const name = String(product?.full_name ?? product?.name ?? '').trim();
   if (!name) {
@@ -779,6 +937,7 @@ function normalizeOdaProduct(product) {
     saturated_fat_per_100: nutrition.saturated_fat_per_100,
     fiber_per_100: nutrition.fiber_per_100,
     salt_per_100: nutrition.salt_per_100,
+    caffeine_mg_per_can: caffeineMgPerCan,
     ingredients: contentInfo.ingredients,
     allergens: contentInfo.allergens,
     raw_source_data: sanitizeRawSourceData(product, localDetails, contentInfo.filteredRows),
@@ -858,6 +1017,7 @@ function normalizedToUpsertRow(normalized) {
     saturated_fat_per_100: normalized.saturated_fat_per_100,
     fiber_per_100: normalized.fiber_per_100,
     salt_per_100: normalized.salt_per_100,
+    caffeine_mg_per_can: normalized.caffeine_mg_per_can,
     ingredients: normalized.ingredients,
     allergens: normalized.allergens,
     raw_source_data: normalized.raw_source_data,
@@ -1017,6 +1177,7 @@ async function resolveFoodItemsWriteContext(client) {
     'saturated_fat_per_100',
     'fiber_per_100',
     'salt_per_100',
+    'caffeine_mg_per_can',
     'ingredients',
     'allergens',
     'raw_source_data',
@@ -1332,13 +1493,11 @@ async function runImporter(options) {
   }
 
   let products;
-  if (options.onlyProductId) {
-    products = [
-      {
-        productId: options.onlyProductId,
-        productUrl: `https://oda.com/no/products/${options.onlyProductId}/`,
-      },
-    ];
+  if (options.productIds.length > 0) {
+    products = options.productIds.map((productId) => ({
+      productId,
+      productUrl: `https://oda.com/no/products/${productId}/`,
+    }));
   } else {
     const discovery = await discoverProductUrls({
       sitemapUrl: options.sitemapUrl,
@@ -1492,6 +1651,7 @@ async function runImporter(options) {
         sugar_per_100: parsed.normalized.sugar_per_100,
         fiber_per_100: parsed.normalized.fiber_per_100,
         salt_per_100: parsed.normalized.salt_per_100,
+        caffeine_mg_per_can: parsed.normalized.caffeine_mg_per_can,
         missingNutritionFields: parsed.missingNutritionFields,
       };
 
@@ -1583,6 +1743,7 @@ async function main() {
         sample: options.sample,
         limit: options.limit,
         onlyProductId: options.onlyProductId,
+        productIds: options.productIds,
         delayMs: options.delayMs,
         batchSize: options.batchSize,
       },
@@ -1612,6 +1773,8 @@ module.exports = {
   discoverProductUrls,
   parseDecimalNumber,
   parseEnergyValue,
+  parseVolumeMl,
+  extractCaffeineMgPer100Ml,
   normalizeNutritionRows,
   normalizeOdaProduct,
   normalizedToUpsertRow,

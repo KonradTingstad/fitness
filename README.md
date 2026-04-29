@@ -1,6 +1,6 @@
 # FormFuel (Fitness App)
 
-Sist oppdatert: 2026-04-27
+Sist oppdatert: 2026-04-29
 
 ## Viktig vedlikeholdsregel
 
@@ -51,6 +51,7 @@ Ved appstart (`App.tsx`) skjer dette:
 - Workouts
 - Nutrition
 - Progress
+- Tab-baren er flytende (`position: absolute`), og skjerminnhold kompenserer automatisk med ekstra bunnklarering sa nederste element ikke havner bak menybaren.
 
 ### Stack-skjermer
 
@@ -96,6 +97,7 @@ Ved appstart (`App.tsx`) skjer dette:
 - `Program`: ukesplan + grupperte templates i 2-kolonne grid + full `Edit program` editor
 - `History`: ukesoppsummering, kalender og fullforte okter med sammendrag
 - `Exercises`: sok/filter, PR/last set-data, inngang til historikk
+- Workouts-header og toppfaner bruker na samme dimensjoner/hoyde-oppsett som Nutrition for jevnere overgang mellom sidene.
 
 Program-fanen:
 
@@ -282,6 +284,7 @@ Hvis Supabase ikke er konfigurert, fortsetter appen i lokal modus uten datatap l
 - `src/components/Screen.tsx` er standard wrapper for vanlige skjermer.
 - `src/components/AppBackground.tsx` legger en felles gronn toppfade bak skjerminnholdet.
 - Home har fortsatt en egen mer avansert hero-bakgrunn fordi den er en spesiallayout.
+- `src/navigation/tabBarMetrics.ts` samler hoyde/offset for flytende tab-bar, og brukes av `Screen`, `NutritionScreen`, `HomeScreen` og `ActiveWorkoutOverlay` for konsistent bunn-spacing.
 
 ### Domain-lag
 
@@ -438,6 +441,12 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-29: Matchet Workouts topp-layout mot Nutrition (samme header-knapp-hoyde/bredde og samme avrundede tab-shell med lik tab-hoyde) for en smooth overgang mellom `Workouts` og `Nutrition`.
+- 2026-04-29: La til joggeikon for `cardio` hentet fra nettet (Material Design Icons `run-fast`) og koblet det inn i felles aktivitetsikon-komponent. Kildesvg lagret i `assets/icons/mdi/run-fast.svg`.
+- 2026-04-29: La til komplett ikonoversikt for `lucide-react-native` i `docs/LUCIDE_ICON_LIST.md` (1699 ikon-komponenter) for enklere valg av UI-ikoner.
+- 2026-04-29: Lastet ned Tabler SVG-ikoner for `ball-tennis` (padel) og `golf` til `assets/icons/tabler/`, og koblet dem inn i felles aktivitetsikon-komponent for Today/Program/This week.
+- 2026-04-29: Workouts `Today > This week` bruker na samme aktivitetsikoner som Program-ukesvisningen, aktivitetstekst i cellene er fjernet, og status vises som liten badge under ikonet (gronn check for fullfort, rod X for missed, nøytral prikk for pending/rest/upcoming).
+- 2026-04-29: La til global bunnklarering for flytende tab-bar slik at nederste innhold ikke dekkes av menybaren ved scrolling. Implementert via ny `tabBarMetrics`-modul og koblet inn i `Screen`, `NutritionScreen`, `HomeScreen` og `ActiveWorkoutOverlay`.
 - 2026-04-27: `Edit program`-UI er polert med mer levende ukeheader, rikere dagrader (aktivitetschips/meta), subtile aktivitetstoner og en mer dashboard-preget Program Summary, uten funksjonelle endringer i lagring/flyt.
 - 2026-04-27: Program-tab `Weekly schedule` viser na valgt ukeintervall i header med forrige/neste uke-knapper, og cellene er forenklet til kun dag + ikon for jevnere lesbarhet.
 - 2026-04-27: Justert Program-tab `Weekly schedule` til dag/dato + ikon per celle (aktivitetstekst under ikonene er fjernet, men dato/info er beholdt).
@@ -463,3 +472,4 @@ Ekstra ideer finnes i: `To be added.md`.
 - 2026-04-24: Progress er refaktorert til datadrevet widget-dashboard med `Add statistic`-flyt (kategori -> velg metrikk -> konfigurer -> lagre), nye progress-komponenter og persistens i `progress_widgets`.
 - 2026-04-24: Opprettet full `README.md` med komplett appoversikt, funksjonsstatus, arkitektur, setup, sync-beskrivelse, teststatus og vedlikeholdsregel for videre oppdateringer.
 - 2026-04-25: La til manuell one-time Oda private snapshot-importer (`scripts/import-oda-foods.js`), Supabase migrasjon for utvidet `food_items`-schema/soke-funksjon, tester for importer-logikk og dokumentasjon i `docs/ODA_PRIVATE_IMPORT.md`.
+- 2026-04-29: Added compact shared DateNavigator (arrows + swipe) for Workouts > Today and Nutrition > Diary, and wired both screens to selectedDate-driven data updates.

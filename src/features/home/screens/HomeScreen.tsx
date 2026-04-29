@@ -26,6 +26,7 @@ import { Routine } from '@/domain/models';
 import { useDashboard, useProgramScheduleForRange, useRoutines } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
+import { useFloatingTabBarClearance } from '@/navigation/tabBarMetrics';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
@@ -165,7 +166,8 @@ export function HomeScreen() {
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
   const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
-  const workoutBottomPadding = useWorkoutOverlayPadding(120);
+  const tabBarClearance = useFloatingTabBarClearance(8);
+  const workoutBottomPadding = useWorkoutOverlayPadding(28 + tabBarClearance);
   const dashboard = useDashboard();
   const routines = useRoutines();
   const todayLocalDate = toLocalDateKey();

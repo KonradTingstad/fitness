@@ -13,6 +13,8 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
+import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
+import { useFloatingTabBarClearance } from '@/navigation/tabBarMetrics';
 import { useAppTheme } from '@/theme/theme';
 
 type NutritionButtonVariant = 'primary' | 'soft' | 'ghost';
@@ -71,6 +73,8 @@ function cardOuterStyle(style?: StyleProp<ViewStyle>): ViewStyle {
 export function NutritionScreen({ children, contentContainerStyle, scrollProps, resetScrollOnBlur = false }: NutritionScreenProps) {
   const theme = useAppTheme();
   const scrollViewRef = useRef<ScrollView>(null);
+  const tabBarClearance = useFloatingTabBarClearance();
+  const bottomPadding = useWorkoutOverlayPadding(28 + tabBarClearance);
   const scrollY = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -131,7 +135,7 @@ export function NutritionScreen({ children, contentContainerStyle, scrollProps, 
         <Animated.ScrollView
           ref={scrollViewRef}
           {...scrollProps}
-          contentContainerStyle={[styles.content, contentContainerStyle]}
+          contentContainerStyle={[styles.content, { paddingBottom: bottomPadding }, contentContainerStyle]}
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
           scrollEventThrottle={16}

@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppBackground } from '@/components/AppBackground';
 import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
+import { useFloatingTabBarClearance } from '@/navigation/tabBarMetrics';
 import { useAppTheme } from '@/theme/theme';
 
 interface Props extends PropsWithChildren {
@@ -17,8 +18,9 @@ interface Props extends PropsWithChildren {
 export function Screen({ children, scroll = true, padded = true, style, resetScrollOnBlur = false }: Props) {
   const theme = useAppTheme();
   const scrollViewRef = useRef<ScrollView>(null);
-  const workoutPadding = useWorkoutOverlayPadding(0);
-  const contentStyle = [styles.content, { paddingBottom: 24 + workoutPadding }, padded && { padding: theme.spacing(4) }, style];
+  const tabBarClearance = useFloatingTabBarClearance(8);
+  const bottomPadding = useWorkoutOverlayPadding(24 + tabBarClearance);
+  const contentStyle = [styles.content, { paddingBottom: bottomPadding }, padded && { padding: theme.spacing(4) }, style];
 
   useFocusEffect(
     useCallback(() => {

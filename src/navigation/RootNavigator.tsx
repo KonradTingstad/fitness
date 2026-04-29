@@ -26,6 +26,7 @@ import { WorkoutDashboardScreen } from '@/features/workouts/screens/WorkoutDashb
 import { WorkoutSummaryScreen } from '@/features/workouts/screens/WorkoutSummaryScreen';
 import { ActiveWorkoutOverlay } from '@/features/workouts/components/live/ActiveWorkoutOverlay';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
+import { FLOATING_TAB_BAR_HEIGHT, getFloatingTabBarBottomOffset } from '@/navigation/tabBarMetrics';
 import { BottomTabParamList, RootStackParamList } from '@/navigation/types';
 import { useAppStore } from '@/stores/appStore';
 import { useAppTheme } from '@/theme/theme';
@@ -39,7 +40,7 @@ function MainTabs() {
   const { width: screenWidth } = useWindowDimensions();
   const hasActiveWorkout = useLiveWorkoutOverlayStore((state) => state.hasActiveWorkout);
   const workoutExpanded = useLiveWorkoutOverlayStore((state) => state.expanded);
-  const floatingBottom = Math.max(insets.bottom - 4, 12);
+  const floatingBottom = getFloatingTabBarBottomOffset(insets.bottom);
   const tabBarHorizontalInset = screenWidth < 360 ? 14 : 18;
   const workoutCollapsed = hasActiveWorkout && !workoutExpanded;
 
@@ -89,7 +90,7 @@ function MainTabs() {
             borderTopWidth: 0,
             borderWidth: 0,
             borderRadius: 18,
-            height: 62,
+            height: FLOATING_TAB_BAR_HEIGHT,
             paddingBottom: 6,
             paddingTop: 6,
             marginHorizontal: tabBarHorizontalInset,

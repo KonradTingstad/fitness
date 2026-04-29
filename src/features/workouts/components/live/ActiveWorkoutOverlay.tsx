@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useActiveWorkout } from '@/hooks/useAppQueries';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { LiveWorkoutSheet } from '@/features/workouts/components/live/LiveWorkoutSheet';
+import { FLOATING_TAB_BAR_HEIGHT, getFloatingTabBarBottomOffset } from '@/navigation/tabBarMetrics';
 
 export function ActiveWorkoutOverlay() {
   const insets = useSafeAreaInsets();
@@ -31,9 +32,8 @@ export function ActiveWorkoutOverlay() {
     return null;
   }
 
-  const floatingBottom = Math.max(insets.bottom - 4, 12);
-  const tabBarHeight = 62;
-  const miniBottom = floatingBottom + tabBarHeight;
+  const floatingBottom = getFloatingTabBarBottomOffset(insets.bottom);
+  const miniBottom = floatingBottom + FLOATING_TAB_BAR_HEIGHT;
 
   return (
     <LiveWorkoutSheet

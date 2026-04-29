@@ -66,8 +66,8 @@ import { queryKeys } from '@/hooks/queryKeys';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
+import { DateNavigator } from '@/components/DateNavigator';
 import { resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
-import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
 
@@ -842,8 +842,8 @@ export function NutritionDiaryScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
-  const localDate = toLocalDateKey();
-  const yesterdayDate = shiftLocalDate(localDate, -1);
+  const [selectedDate, setSelectedDate] = useState(() => toLocalDateKey());
+  const yesterdayDate = shiftLocalDate(selectedDate, -1);
 
   const [tab, setTab] = useState<NutritionTab>('diary');
   const [searchQuery, setSearchQuery] = useState('');
@@ -872,7 +872,7 @@ export function NutritionDiaryScreen() {
     mealsPerDayTarget: '4',
   });
 
-  const diary = useDiary(localDate);
+  const diary = useDiary(selectedDate);
   const yesterdayDiary = useDiary(yesterdayDate);
   const profile = useProfileBundle();
   const mealsPerDayTarget = useMealsPerDayTarget();
@@ -881,9 +881,8 @@ export function NutritionDiaryScreen() {
   const searchedFoods = useFoodSearch(searchQuery);
   const foodCatalog = useFoodSearch('');
   const frequentlyLoggedFoods = useFrequentlyLoggedFoods();
-  const weeklyCalories = useWeeklyCalories(localDate);
-  const calorieStreak = useCalorieStreak(localDate);
-  const nutritionBottomPadding = useWorkoutOverlayPadding(28);
+  const weeklyCalories = useWeeklyCalories(selectedDate);
+  const calorieStreak = useCalorieStreak(selectedDate);
 
   const flashSavedMealAdded = (savedMealId: string) => {
     setRecentlyAddedSavedMealId(savedMealId);
@@ -895,16 +894,16 @@ export function NutritionDiaryScreen() {
   const quickAdd = useMutation({
     mutationFn: (input: { foodItemId: string; mealSlot: MealSlot; servings?: number; food?: FoodItem }) =>
       addDiaryEntry({
-        localDate,
+        localDate: selectedDate,
         mealSlot: input.mealSlot,
         foodItemId: input.foodItemId,
         food: input.food,
         servings: input.servings ?? 1,
       }),
     onSuccess: (_entryId, input) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
       queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
@@ -921,7 +920,7 @@ export function NutritionDiaryScreen() {
 
       for (const entry of input.entries) {
         await addDiaryEntry({
-          localDate,
+          localDate: selectedDate,
           mealSlot: input.mealSlot,
           foodItemId: entry.foodItemId,
           servings: entry.servings,
@@ -929,9 +928,9 @@ export function NutritionDiaryScreen() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
       queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
@@ -950,11 +949,11 @@ export function NutritionDiaryScreen() {
   };
 
   const quickAddSavedMealMutation = useMutation({
-    mutationFn: (input: { savedMealId: string; mealSlot: MealSlot }) => logSavedMeal(input.savedMealId, input.mealSlot, localDate),
+    mutationFn: (input: { savedMealId: string; mealSlot: MealSlot }) => logSavedMeal(input.savedMealId, input.mealSlot, selectedDate),
     onSuccess: (_data, input) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(localDate) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
       queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
@@ -1095,16 +1094,16 @@ export function NutritionDiaryScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.profile });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.mealsPerDayTarget });
-      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     onError: (error) => Alert.alert('Goals', error instanceof Error ? error.message : 'Unable to save goal settings.'),
   });
 
   const quickLogWaterMutation = useMutation({
-    mutationFn: (amountMl: number) => addWater(amountMl, localDate),
+    mutationFn: (amountMl: number) => addWater(amountMl, selectedDate),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       void Haptics.selectionAsync();
     },
@@ -1171,7 +1170,7 @@ export function NutritionDiaryScreen() {
     [diaryData?.byMeal, yesterdayDiary.data?.byMeal],
   );
 
-  const weeklyDates = useMemo(() => Array.from({ length: 7 }, (_, index) => shiftLocalDate(localDate, index - 6)), [localDate]);
+  const weeklyDates = useMemo(() => Array.from({ length: 7 }, (_, index) => shiftLocalDate(selectedDate, index - 6)), [selectedDate]);
   const weeklyCaloriesPoints = useMemo(() => {
     const byDate = new Map((weeklyCalories.data ?? []).map((row) => [row.localDate, roundMetric(row.totals.calories)]));
     return weeklyDates.map((date) => ({
@@ -1294,13 +1293,13 @@ export function NutritionDiaryScreen() {
   const quickAddSearchFood = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.selectionAsync();
-    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate: selectedDate });
   };
 
   const openSearchFoodDetails = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate: selectedDate });
   };
 
   const showSearchFilter = (filter: SearchFilter) => {
@@ -1466,7 +1465,7 @@ export function NutritionDiaryScreen() {
 
   const logMealFromGoals = () => {
     void Haptics.selectionAsync();
-    navigation.navigate('FoodSearch', { mealSlot: defaultSavedMealSlot, localDate });
+    navigation.navigate('FoodSearch', { mealSlot: defaultSavedMealSlot, localDate: selectedDate });
   };
 
   const logWaterFromGoals = () => {
@@ -1544,7 +1543,7 @@ export function NutritionDiaryScreen() {
       saveGoalSettings();
       return;
     }
-    navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate });
+    navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate });
   };
 
   const headerAction = tab === 'goals'
@@ -1555,7 +1554,7 @@ export function NutritionDiaryScreen() {
 
   if (diary.isLoading || profile.isLoading || nutritionLibrary.isLoading || recentFoods.isLoading || mealsPerDayTarget.isLoading) {
     return (
-      <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
+      <NutritionScreen resetScrollOnBlur>
         <LoadingState label="Loading nutrition" />
       </NutritionScreen>
     );
@@ -1563,7 +1562,7 @@ export function NutritionDiaryScreen() {
 
   if (!diaryData || !goals) {
     return (
-      <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
+      <NutritionScreen resetScrollOnBlur>
         <EmptyState icon={Target} title="Nutrition data unavailable" body="Try reloading once profile and diary data are ready." />
       </NutritionScreen>
     );
@@ -1628,16 +1627,16 @@ export function NutritionDiaryScreen() {
             color={section.color}
             tint={section.tint}
             onToggle={() => toggleMealSlot(section.slot)}
-            onAddFood={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate })}
+            onAddFood={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate })}
             onQuickAddLastFood={() => quickAddLastMealFood(section.slot, section.entries, section.previousEntries)}
             onRepeatPreviousMeal={() => repeatMealFromYesterday(section.slot, section.previousEntries)}
           />
         ))}
       </View>
 
-      <NutritionButton label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate })} style={styles.primaryCta} />
+      <NutritionButton label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate })} style={styles.primaryCta} />
 
-      <NutritionCard onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate })} style={styles.secondaryQuickAction}>
+      <NutritionCard onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate: selectedDate })} style={styles.secondaryQuickAction}>
         <View style={styles.quickActionCopy}>
           <View style={[styles.barcodeIconWrap, { backgroundColor: theme.colors.surfaceAlt }]}>
             <Barcode size={20} color={theme.colors.primary} />
@@ -1667,7 +1666,7 @@ export function NutritionDiaryScreen() {
           />
         </View>
         <Pressable
-          onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: activeSearchMealSlot, localDate })}
+          onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: activeSearchMealSlot, localDate: selectedDate })}
           style={({ pressed }) => [
             styles.searchAction,
             { opacity: pressed ? 0.84 : 1 },
@@ -2103,7 +2102,7 @@ export function NutritionDiaryScreen() {
   };
 
   return (
-    <NutritionScreen resetScrollOnBlur contentContainerStyle={{ paddingBottom: nutritionBottomPadding }}>
+    <NutritionScreen resetScrollOnBlur>
       <View style={styles.header}>
         <View>
           <AppText variant="title">Nutrition</AppText>
@@ -2120,6 +2119,7 @@ export function NutritionDiaryScreen() {
       </View>
 
       {renderTabs()}
+      {tab === 'diary' ? <DateNavigator localDate={selectedDate} onChange={setSelectedDate} hint /> : null}
 
       {tab === 'diary' ? renderDiaryTab() : null}
       {tab === 'search' ? renderSearchTab() : null}

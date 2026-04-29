@@ -9,13 +9,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Circle,
   Clock,
   Dumbbell,
   EllipsisVertical,
   Flame,
   History,
-  Minus,
   Pencil,
   Play,
   Plus,
@@ -49,6 +47,7 @@ import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
+import { DateNavigator } from '@/components/DateNavigator';
 import { AppTheme, useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -544,10 +543,6 @@ function calculateCurrentStreak(
   return streak;
 }
 
-function scheduleTitleForCell(title: string): string {
-  return title.replace(/\s+Strength$/i, '');
-}
-
 export function WorkoutDashboardScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
@@ -565,16 +560,18 @@ export function WorkoutDashboardScreen() {
   const [historyCalendarMode, setHistoryCalendarMode] = useState<HistoryCalendarMode>('month');
   const today = new Date();
   const todayKey = localDateKey(today);
+  const [selectedDate, setSelectedDate] = useState(() => todayKey);
+  const selectedDateObj = new Date(`${selectedDate}T00:00:00`);
   const todayMonthKey = localDateKey(startOfMonth(today));
-  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+  const weekStart = startOfWeek(selectedDateObj, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(selectedDateObj, { weekStartsOn: 1 });
   const [programWeekStart, setProgramWeekStart] = useState(() => weekStart);
   const programWeekEnd = addDays(programWeekStart, 6);
   const programWeekStartKey = localDateKey(programWeekStart);
   const programWeekEndKey = localDateKey(programWeekEnd);
   const streakStart = addDays(today, -35);
   const planRangeStart = localDateKey(streakStart);
-  const planRangeEnd = localDateKey(weekEnd);
+  const planRangeEnd = selectedDate;
   const weekStartKey = localDateKey(weekStart);
   const weekEndKey = localDateKey(weekEnd);
   const historyCalendarAnchor = historyCalendarMode === 'month' ? historyMonth : today;
@@ -588,7 +585,7 @@ export function WorkoutDashboardScreen() {
   const routines = useRoutines();
   const recent = useRecentWorkouts();
   const thisWeekProgramSchedule = useProgramScheduleForRange(weekStartKey, weekEndKey);
-  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, todayKey);
+  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, selectedDate);
   const programSchedule = useProgramScheduleForRange(programWeekStartKey, programWeekEndKey);
   const nonStrengthOutcomes = useProgramDayOutcomesForRange(planRangeStart, planRangeEnd);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
@@ -724,9 +721,9 @@ export function WorkoutDashboardScreen() {
   const historyYearMonths = buildHistoryYearMonths(historyCalendarAnchor);
   const historyCalendarYears = Array.from({ length: HISTORY_MULTI_YEAR_COUNT }, (_, index) => historyYear - HISTORY_MULTI_YEAR_COUNT + 1 + index);
   const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), thisWeekScheduleMap, routineList));
-  const todayProgramDay = buildProgramDay(today, thisWeekScheduleMap, routineList);
-  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), streakScheduleMap, routineList));
-  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, todayKey, nonStrengthOutcomesByDate);
+  const selectedProgramDay = buildProgramDay(selectedDateObj, thisWeekScheduleMap, routineList);
+  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(selectedDateObj, -index), streakScheduleMap, routineList));
+  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, selectedDate, nonStrengthOutcomesByDate);
 
   const workoutsThisWeek = sessionRange.filter((workout) => {
     const startedAt = new Date(workout.startedAt);
@@ -751,7 +748,7 @@ export function WorkoutDashboardScreen() {
   const routinesById = new Map(routineList.map((routine) => [routine.id, routine]));
 
   const renderTabs = () => (
-    <View style={[styles.tabsRow, { borderColor: theme.colors.border }]}>
+    <View style={styles.tabShell}>
       {WORKOUT_TABS.map((item) => {
         const activeTab = tab === item.key;
         return (
@@ -760,10 +757,14 @@ export function WorkoutDashboardScreen() {
             onPress={() => setTab(item.key)}
             style={({ pressed }) => [
               styles.tabItem,
-              { borderBottomColor: activeTab ? theme.colors.primary : 'transparent', opacity: pressed ? 0.82 : 1 },
+              {
+                backgroundColor: activeTab ? 'rgba(44,53,64,0.82)' : 'transparent',
+                borderBottomColor: activeTab ? theme.colors.primary : 'transparent',
+                opacity: pressed ? 0.84 : 1,
+              },
             ]}
           >
-            <AppText weight={activeTab ? '800' : '600'} style={{ color: activeTab ? theme.colors.primary : theme.colors.muted }}>
+            <AppText weight={activeTab ? '800' : '600'} style={{ color: activeTab ? theme.colors.text : theme.colors.muted }}>
               {item.label}
             </AppText>
           </Pressable>
@@ -1021,40 +1022,40 @@ export function WorkoutDashboardScreen() {
     );
 
   const renderTodayTab = () => {
-    const todaySessions = groupedSessions.get(todayKey) ?? [];
-    const activeToday = todaySessions.find(
-      (session) => session.status === 'active' && (todayProgramDay.type === 'rest' || workoutMatchesProgramDay(session, todayProgramDay)),
+    const selectedSessions = groupedSessions.get(selectedDate) ?? [];
+    const activeToday = selectedSessions.find(
+      (session) => session.status === 'active' && (selectedProgramDay.type === 'rest' || workoutMatchesProgramDay(session, selectedProgramDay)),
     );
-    const isRestToday = todayProgramDay.type === 'rest';
-    const isPlannedToday = todayProgramDay.type === 'workout';
-    const isStrengthToday = todayProgramDay.activityType === 'strength';
-    const topRoutine = todayProgramDay.routineId
-      ? routineList.find((routine) => routine.id === todayProgramDay.routineId)
+    const isRestToday = selectedProgramDay.type === 'rest';
+    const isPlannedToday = selectedProgramDay.type === 'workout';
+    const isStrengthToday = selectedProgramDay.activityType === 'strength';
+    const topRoutine = selectedProgramDay.routineId
+      ? routineList.find((routine) => routine.id === selectedProgramDay.routineId)
       : suggestedRoutine;
     const topTitle = isPlannedToday ? "Today's workout" : 'Suggested workout';
-    const workoutTitle = isPlannedToday ? todayProgramDay.title : topRoutine?.name ?? 'Empty workout';
-    const workoutExerciseCount = isPlannedToday ? todayProgramDay.exerciseCount : topRoutine?.exercises.length ?? 0;
+    const workoutTitle = isPlannedToday ? selectedProgramDay.title : topRoutine?.name ?? 'Empty workout';
+    const workoutExerciseCount = isPlannedToday ? selectedProgramDay.exerciseCount : topRoutine?.exercises.length ?? 0;
     const workoutDuration = isPlannedToday
-      ? todayProgramDay.estimatedDurationMinutes
+      ? selectedProgramDay.estimatedDurationMinutes
       : topRoutine
         ? Math.max(35, topRoutine.exercises.length * 10)
         : 30;
     const canManuallyTrackToday = isPlannedToday && !isStrengthToday;
-    const todayNonStrengthStatus = canManuallyTrackToday ? nonStrengthOutcomesByDate.get(todayKey) : undefined;
-    const todayProgramIconColor = programActivityColor(todayProgramDay.activityType, theme);
+    const todayNonStrengthStatus = canManuallyTrackToday ? nonStrengthOutcomesByDate.get(selectedDate) : undefined;
+    const todayProgramIconColor = programActivityColor(selectedProgramDay.activityType, theme);
     const startButtonLabel = activeToday
       ? 'View workout'
       : isStrengthToday
-        ? 'Start todays workout'
+        ? (selectedDate === todayKey ? "Start today's workout" : 'Start workout')
         : 'Start empty workout';
 
     const fullWeek = weekProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
     const streakVisualDays = weekProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
 
     return (
@@ -1064,11 +1065,11 @@ export function WorkoutDashboardScreen() {
             <AppText variant="section" style={{ color: theme.colors.primary }}>
               {isRestToday ? "Today's workout" : topTitle}
             </AppText>
-            <ProgramActivityIcon activityType={todayProgramDay.activityType} size={20} color={todayProgramIconColor} />
+            <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={20} color={todayProgramIconColor} />
           </View>
           <View style={styles.suggestedRow}>
             <View style={[styles.suggestedIcon, { borderColor: theme.colors.primary }]}>
-              <ProgramActivityIcon activityType={todayProgramDay.activityType} size={24} color={todayProgramIconColor} />
+              <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={24} color={todayProgramIconColor} />
             </View>
             <View>
               <AppText weight="800" style={styles.suggestedTitle}>
@@ -1076,7 +1077,7 @@ export function WorkoutDashboardScreen() {
               </AppText>
               <AppText muted>
                 {isRestToday
-                  ? 'No workout planned today'
+                  ? (selectedDate === todayKey ? 'No workout planned today' : 'No workout planned for this day')
                   : isStrengthToday
                     ? `${workoutExerciseCount} exercises • ~${workoutDuration} min`
                     : `~${workoutDuration} min planned`}
@@ -1092,7 +1093,7 @@ export function WorkoutDashboardScreen() {
                 <Pressable
                   accessibilityRole="button"
                   disabled={saveProgramDayOutcome.isPending}
-                  onPress={() => saveProgramDayOutcome.mutate({ localDate: todayKey, status: 'completed' })}
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'completed' })}
                   style={({ pressed }) => [
                     styles.outcomeButton,
                     {
@@ -1110,7 +1111,7 @@ export function WorkoutDashboardScreen() {
                 <Pressable
                   accessibilityRole="button"
                   disabled={saveProgramDayOutcome.isPending}
-                  onPress={() => saveProgramDayOutcome.mutate({ localDate: todayKey, status: 'missed' })}
+                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'missed' })}
                   style={({ pressed }) => [
                     styles.outcomeButton,
                     {
@@ -1142,8 +1143,8 @@ export function WorkoutDashboardScreen() {
                   return;
                 }
                 if (isPlannedToday && isStrengthToday) {
-                  if (todayProgramDay.routineId) {
-                    startRoutine.mutate(todayProgramDay.routineId);
+                  if (selectedProgramDay.routineId) {
+                    startRoutine.mutate(selectedProgramDay.routineId);
                     return;
                   }
                 }
@@ -1167,19 +1168,34 @@ export function WorkoutDashboardScreen() {
           </View>
           <View style={styles.weekRow}>
             {fullWeek.map(({ day, adherence }, index) => {
-              const StatusIcon = adherence.status === 'done' ? Check : adherence.status === 'rest' || adherence.status === 'missed' ? Minus : Circle;
-              const color =
-                adherence.tone === 'good' ? theme.colors.primary : adherence.tone === 'bad' ? theme.colors.danger : theme.colors.muted;
+              const activityIconColor = programActivityColor(day.activityType, theme);
+              const isCompleted = adherence.status === 'done';
+              const isMissed = adherence.status === 'missed';
+              const statusColor = isCompleted ? theme.colors.primary : isMissed ? theme.colors.danger : theme.colors.muted;
               return (
                 <View key={day.localDate} style={[styles.weekCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}>
                   <AppText variant="small" muted>
                     {day.day.toUpperCase()}
                   </AppText>
-                  <AppText weight="700" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.74} style={styles.weekTitle}>
-                    {scheduleTitleForCell(day.title)}
-                  </AppText>
-                  <View style={[styles.weekStatusIcon, { borderColor: color }]}>
-                    <StatusIcon size={16} color={color} />
+                  <View style={[styles.weekActivityIconWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                    <ProgramActivityIcon activityType={day.activityType} size={18} color={activityIconColor} />
+                  </View>
+                  <View
+                    style={[
+                      styles.weekOutcomeBadge,
+                      {
+                        borderColor: statusColor,
+                        backgroundColor: isCompleted || isMissed ? theme.colors.surfaceAlt : 'transparent',
+                      },
+                    ]}
+                  >
+                    {isCompleted ? (
+                      <Check size={11} color={statusColor} />
+                    ) : isMissed ? (
+                      <X size={11} color={statusColor} />
+                    ) : (
+                      <View style={[styles.weekOutcomePendingDot, { backgroundColor: statusColor }]} />
+                    )}
                   </View>
                 </View>
               );
@@ -1716,10 +1732,11 @@ export function WorkoutDashboardScreen() {
           <AppText variant="title">Workouts</AppText>
           <AppText muted>Templates, history, and active logging.</AppText>
         </View>
-        <Button label="+ Empty" variant="secondary" onPress={() => startEmpty.mutate()} />
+        <Button label="+ Empty" variant="secondary" onPress={() => startEmpty.mutate()} style={styles.headerAction} />
       </View>
 
       {renderTabs()}
+      {tab === 'today' ? <DateNavigator localDate={selectedDate} onChange={setSelectedDate} hint /> : null}
 
       {tab === 'today' ? renderTodayTab() : null}
       {tab === 'program' ? renderProgramTab() : null}
@@ -1735,18 +1752,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  tabsRow: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  headerAction: {
+    minHeight: 50,
+    minWidth: 122,
+  },
+  tabShell: {
+    backgroundColor: 'rgba(22,28,35,0.7)',
+    borderRadius: 12,
     flexDirection: 'row',
-    marginHorizontal: -2,
+    overflow: 'hidden',
   },
   tabItem: {
     alignItems: 'center',
     borderBottomWidth: 3,
     flex: 1,
-    minHeight: 50,
     justifyContent: 'center',
+    minHeight: 48,
   },
   spaceBetween: {
     alignItems: 'center',
@@ -1808,20 +1829,30 @@ const styles = StyleSheet.create({
   weekCell: {
     alignItems: 'center',
     flex: 1,
-    gap: 6,
+    gap: 7,
     paddingHorizontal: 6,
-    paddingVertical: 6,
+    paddingVertical: 7,
   },
-  weekTitle: {
-    maxWidth: 56,
-  },
-  weekStatusIcon: {
+  weekActivityIconWrap: {
     alignItems: 'center',
-    borderRadius: 15,
-    borderWidth: 2,
-    height: 30,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 32,
     justifyContent: 'center',
-    width: 30,
+    width: 32,
+  },
+  weekOutcomeBadge: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 18,
+    justifyContent: 'center',
+    width: 18,
+  },
+  weekOutcomePendingDot: {
+    borderRadius: 999,
+    height: 6,
+    width: 6,
   },
   streakCard: {
     gap: 8,

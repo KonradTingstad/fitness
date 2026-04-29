@@ -26,18 +26,7 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
 - Prioritet: Medium
 - Notater: Kan kombineres med generell opprydding av navigasjon i appen.
 
-### 3) Fikse ODA API for mat
-
-- Status: [ ] Ikke startet
-- Beskrivelse: Integrere og stabilisere ODA API for matdata i appen.
-- Eksempler:
-  - Hente produkter og naeringsinnhold fra ODA.
-  - Forbedre treff og filtrering i matsok.
-  - Sikre robust handtering av feil og manglende data.
-- Prioritet: Hoy
-- Notater: Viktig for mer presis logging av mat i hverdagsbruk.
-
-### 4) Lagre og dele maltider
+### 3) Lagre og dele maltider
 
 - Status: [ ] Ikke startet
 - Beskrivelse: Gi brukere mulighet til a lagre egne maltider i appen og dele dem med venner.
@@ -47,6 +36,17 @@ Her samler vi ideer til funksjoner appen kan fa pa sikt.
   - Importere eller kopiere maltider man far delt.
 - Prioritet: Medium
 - Notater: Kan kobles tett mot sosiale funksjoner og felles planlegging.
+
+### 4) Fiks pop up live økt tracker krasjer i bunnmeny
+
+- Status: [ ] Ikke startet
+- Beskrivelse: Fikse krasj i bunnmenyen knyttet til pop up for live økt tracker.
+- Eksempler:
+  - Reprodusere krasjen ved a apne pop up under aktiv live okt.
+  - Logge feilen og identifisere hva som utloser krasj i bunnmenyen.
+  - Verifisere at pop up fungerer stabilt etter fix.
+- Prioritet: Hoy
+- Notater: Bør prioriteres siden feilen treffer en sentral del av brukerflyten.
 
 ## Mal for nye forslag
 

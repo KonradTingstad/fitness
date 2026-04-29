@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { WorkoutExercise } from '@/domain/models';
-import { displaySetLabel, setTypeTone } from '@/features/workouts/utils/liveWorkout';
+import { setTypeTone } from '@/features/workouts/utils/liveWorkout';
 import { useAppTheme } from '@/theme/theme';
 
 export type ActiveInputField = 'weightKg' | 'reps';
@@ -48,13 +48,16 @@ export function SetLoggingTable({
             styles.exerciseSection,
             {
               borderTopColor: exerciseIndex > 0 ? theme.colors.border : 'transparent',
+              marginTop: exerciseIndex > 0 ? 8 : 0,
             },
           ]}
         >
           <View style={styles.exerciseHeader}>
             <View style={styles.exerciseCopy}>
-              <AppText variant="section">{exercise.exercise?.name ?? 'Exercise'}</AppText>
-              <AppText muted variant="small">
+              <AppText variant="section" weight="800" style={styles.exerciseTitle}>
+                {exercise.exercise?.name ?? 'Exercise'}
+              </AppText>
+              <AppText muted variant="small" style={styles.exerciseMeta}>
                 {exercise.exercise?.primaryMuscle ?? 'Body'} • {exercise.exercise?.equipment ?? 'Equipment'}
               </AppText>
             </View>
@@ -74,26 +77,27 @@ export function SetLoggingTable({
             </View>
           </View>
 
-          <View style={[styles.tableGroup, { borderColor: theme.colors.border, backgroundColor: 'rgba(255,255,255,0.02)' }]}>
-            <View style={[styles.tableHeader, { borderBottomColor: theme.colors.border, backgroundColor: 'rgba(255,255,255,0.02)' }]}>
-              <AppText variant="small" muted>
+          <View style={styles.tableGroup}>
+            <View style={[styles.tableHeader, { borderTopColor: theme.colors.border, borderBottomColor: theme.colors.border }]}>
+              <AppText variant="small" muted style={[styles.columnHeaderText, styles.setLabelHeader]}>
                 Set
               </AppText>
-              <AppText variant="small" muted>
+              <AppText variant="small" muted style={[styles.columnHeaderText, styles.previousCell]}>
                 Previous
               </AppText>
-              <AppText variant="small" muted>
+              <AppText variant="small" muted style={[styles.columnHeaderText, styles.metricHeader]}>
                 kg
               </AppText>
-              <AppText variant="small" muted>
+              <AppText variant="small" muted style={[styles.columnHeaderText, styles.metricHeader]}>
                 Reps
               </AppText>
-              <AppText variant="small" muted>
+              <AppText variant="small" muted style={[styles.columnHeaderText, styles.checkHeader]}>
                 ✓
               </AppText>
             </View>
 
-            {exercise.sets.map((set) => {
+            {exercise.sets.map((set, setIndex) => {
+              const normalSetIndex = exercise.sets.slice(0, setIndex + 1).filter((item) => setTypeTone(item.setType) === 'normal').length;
               const draft = draftBySetId[set.id] ?? {
                 weightKg: set.weightKg != null ? formatValue(set.weightKg) : '',
                 reps: set.reps != null ? formatValue(set.reps) : '',
@@ -104,6 +108,7 @@ export function SetLoggingTable({
                   ? `${formatValue(set.previousWeightKg ?? 0)} × ${formatValue(set.previousReps ?? 0)}`
                   : '—';
               const setTone = setTypeTone(set.setType);
+              const setLabel = setTone === 'warmup' ? 'W' : setTone === 'drop' ? 'D' : setTone === 'failure' ? 'F' : String(normalSetIndex);
               const setColor =
                 setTone === 'warmup'
                   ? theme.colors.warning
@@ -112,16 +117,27 @@ export function SetLoggingTable({
                     : setTone === 'failure'
                       ? theme.colors.danger
                       : theme.colors.text;
+              const labelSurfaceStyle =
+                setTone === 'warmup'
+                  ? { backgroundColor: 'rgba(244,183,64,0.16)', borderColor: 'rgba(244,183,64,0.48)' }
+                  : setTone === 'drop'
+                    ? { backgroundColor: 'rgba(155,140,255,0.15)', borderColor: 'rgba(155,140,255,0.5)' }
+                    : setTone === 'failure'
+                      ? { backgroundColor: 'rgba(242,95,92,0.16)', borderColor: 'rgba(242,95,92,0.5)' }
+                      : { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border };
 
               return (
                 <View key={set.id} style={[styles.row, { borderBottomColor: theme.colors.border }]}>
-                  <Pressable onPress={() => onOpenSetTypeMenu(set.id)} style={styles.setLabelWrap}>
-                    <AppText weight="800" style={{ color: setColor }}>
-                      {displaySetLabel(set)}
+                  <Pressable
+                    onPress={() => onOpenSetTypeMenu(set.id)}
+                    style={({ pressed }) => [styles.setLabelWrap, labelSurfaceStyle, { opacity: pressed ? 0.82 : 1 }]}
+                  >
+                    <AppText weight="700" style={[styles.setLabelText, { color: setColor }]}>
+                      {setLabel}
                     </AppText>
                   </Pressable>
 
-                  <AppText muted variant="small" style={styles.previousCell}>
+                  <AppText muted variant="small" style={styles.previousText}>
                     {previous}
                   </AppText>
 
@@ -143,12 +159,13 @@ export function SetLoggingTable({
                       styles.checkCell,
                       {
                         borderColor: set.isCompleted ? theme.colors.primary : theme.colors.border,
+                        borderWidth: set.isCompleted ? StyleSheet.hairlineWidth : 0,
                         backgroundColor: set.isCompleted ? 'rgba(53,199,122,0.2)' : theme.colors.surfaceAlt,
                         opacity: pressed ? 0.82 : 1,
                       },
                     ]}
                   >
-                    {set.isCompleted ? <Check size={16} color={theme.colors.primary} /> : <Circle size={16} color={theme.colors.muted} />}
+                    {set.isCompleted ? <Check size={14} color={theme.colors.primary} /> : <Circle size={14} color={theme.colors.muted} />}
                   </Pressable>
                 </View>
               );
@@ -160,7 +177,6 @@ export function SetLoggingTable({
                 styles.addSetButton,
                 {
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceAlt,
                   opacity: pressed ? 0.84 : 1,
                 },
               ]}
@@ -168,7 +184,7 @@ export function SetLoggingTable({
               <View style={[styles.addSetIconWrap, { borderColor: theme.colors.border }]}>
                 <Plus size={14} color={theme.colors.primary} />
               </View>
-              <AppText weight="700" style={{ color: theme.colors.primary }}>
+              <AppText weight="700" style={[styles.addSetText, { color: theme.colors.primary }]}>
                 Add Set
               </AppText>
             </Pressable>
@@ -187,13 +203,14 @@ function FieldCell({ value, active, onPress }: { value: string; active: boolean;
       style={({ pressed }) => [
         styles.fieldCell,
         {
-          borderColor: active ? theme.colors.primary : theme.colors.border,
+          borderColor: active ? theme.colors.primary : 'transparent',
+          borderWidth: active ? 1 : 0,
           backgroundColor: theme.colors.surfaceAlt,
           opacity: pressed ? 0.84 : 1,
         },
       ]}
     >
-      <AppText weight="800" style={{ color: value ? theme.colors.text : theme.colors.muted }}>
+      <AppText weight="700" style={[styles.fieldValueText, { color: value ? theme.colors.text : theme.colors.muted }]}>
         {value || '-'}
       </AppText>
     </Pressable>
@@ -211,40 +228,49 @@ function formatValue(value: number): string {
 const styles = StyleSheet.create({
   exerciseSection: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 10,
-    paddingTop: 16,
+    gap: 6,
+    paddingTop: 12,
   },
   exerciseHeader: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   exerciseCopy: {
     flex: 1,
     gap: 2,
-    paddingRight: 8,
+    paddingRight: 10,
+  },
+  exerciseTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+  },
+  exerciseMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.78,
   },
   exerciseActions: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 5,
   },
   iconButton: {
     alignItems: 'center',
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 31,
+    height: 28,
     justifyContent: 'center',
-    width: 31,
+    width: 28,
   },
   tableGroup: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 0,
   },
   tableHeader: {
     alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    minHeight: 34,
+    minHeight: 32,
     paddingHorizontal: 6,
   },
   row: {
@@ -252,48 +278,83 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     gap: 8,
-    minHeight: 52,
-    paddingHorizontal: 4,
-    paddingVertical: 6,
+    minHeight: 46,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
   },
   setLabelWrap: {
     alignItems: 'center',
-    width: 26,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+    minHeight: 24,
+    minWidth: 30,
+    paddingHorizontal: 6,
+  },
+  columnHeaderText: {
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  setLabelHeader: {
+    width: 34,
+  },
+  setLabelText: {
+    fontSize: 13,
   },
   previousCell: {
     flex: 1,
   },
+  previousText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.82,
+  },
+  metricHeader: {
+    textAlign: 'center',
+    width: 56,
+  },
+  checkHeader: {
+    textAlign: 'center',
+    width: 36,
+  },
   fieldCell: {
     alignItems: 'center',
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
     justifyContent: 'center',
-    minHeight: 38,
-    minWidth: 58,
-    paddingHorizontal: 8,
+    minHeight: 32,
+    width: 56,
+    paddingHorizontal: 6,
+  },
+  fieldValueText: {
+    fontSize: 14,
+    lineHeight: 18,
   },
   checkCell: {
     alignItems: 'center',
-    borderRadius: 9,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
     justifyContent: 'center',
-    minHeight: 38,
-    width: 42,
+    minHeight: 32,
+    width: 36,
   },
   addSetButton: {
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 8,
-    minHeight: 42,
+    gap: 7,
+    minHeight: 38,
     justifyContent: 'center',
   },
   addSetIconWrap: {
     alignItems: 'center',
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 20,
+    height: 18,
     justifyContent: 'center',
-    width: 20,
+    width: 18,
+  },
+  addSetText: {
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

@@ -1,6 +1,6 @@
 import { X, Plus, Check } from 'lucide-react-native';
-import { useMemo, useRef, useState } from 'react';
-import { Pressable, SectionList, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, SectionList, StyleSheet, TextInput, View, ViewToken } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { Exercise } from '@/domain/models';
@@ -39,6 +39,14 @@ export function ExercisePickerSheet({
   const [category, setCategory] = useState('Any Category');
   const [sortDirection] = useState<'asc'>('asc');
   const [filterMenu, setFilterMenu] = useState<FilterMenu>(null);
+  const [activeLetter, setActiveLetter] = useState<string | null>(null);
+  const [overlayLetter, setOverlayLetter] = useState<string | null>(null);
+  const [railHeight, setRailHeight] = useState(0);
+  const overlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingScrollTargetRef = useRef<{ sectionIndex: number; letter: string } | null>(null);
+  const lastRailLetterRef = useRef<string | null>(null);
+  const railInteractingRef = useRef(false);
+  const sectionIndexByLetterRef = useRef<Map<string, number>>(new Map());
 
   const bodyPartOptions = useMemo(() => {
     const values = new Set<string>();
@@ -88,6 +96,117 @@ export function ExercisePickerSheet({
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([title, data]) => ({ title, data }));
   }, [filteredExercises]);
+
+  const sectionIndexByLetter = useMemo(() => {
+    const index = new Map<string, number>();
+    sections.forEach((section, sectionIndex) => {
+      index.set(section.title, sectionIndex);
+    });
+    return index;
+  }, [sections]);
+
+  useEffect(() => {
+    sectionIndexByLetterRef.current = sectionIndexByLetter;
+  }, [sectionIndexByLetter]);
+
+  const alphabetEntries = useMemo(
+    () =>
+      sections.map((section, sectionIndex) => ({
+        letter: section.title,
+        sectionIndex,
+      })),
+    [sections],
+  );
+
+  useEffect(() => {
+    if (!sections.length) {
+      setActiveLetter(null);
+      return;
+    }
+    setActiveLetter((current) => (current && sectionIndexByLetter.has(current) ? current : sections[0].title));
+  }, [sectionIndexByLetter, sections]);
+
+  useEffect(() => {
+    return () => {
+      if (overlayTimeoutRef.current) {
+        clearTimeout(overlayTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const clearOverlaySoon = () => {
+    if (overlayTimeoutRef.current) {
+      clearTimeout(overlayTimeoutRef.current);
+    }
+    overlayTimeoutRef.current = setTimeout(() => setOverlayLetter(null), 280);
+  };
+
+  const jumpToSection = (sectionIndex: number, letter: string, animated: boolean) => {
+    if (sectionIndex < 0) {
+      return;
+    }
+    pendingScrollTargetRef.current = { sectionIndex, letter };
+    setActiveLetter(letter);
+    setOverlayLetter(letter);
+    try {
+      sectionListRef.current?.scrollToLocation({
+        sectionIndex,
+        itemIndex: 0,
+        viewOffset: 18,
+        animated,
+      });
+    } catch {
+      setTimeout(() => {
+        sectionListRef.current?.scrollToLocation({
+          sectionIndex,
+          itemIndex: 0,
+          viewOffset: 18,
+          animated: false,
+        });
+      }, 60);
+    }
+  };
+
+  const handleRailLocation = (locationY: number, animated: boolean) => {
+    if (!alphabetEntries.length || railHeight <= 0) {
+      return;
+    }
+    const clampedY = Math.max(0, Math.min(locationY, railHeight - 1));
+    const slotIndex = Math.max(0, Math.min(alphabetEntries.length - 1, Math.floor((clampedY / railHeight) * alphabetEntries.length)));
+    const entry = alphabetEntries[slotIndex];
+    if (!entry || lastRailLetterRef.current === entry.letter) {
+      return;
+    }
+    lastRailLetterRef.current = entry.letter;
+    jumpToSection(entry.sectionIndex, entry.letter, animated);
+  };
+
+  const onViewableItemsChangedRef = useRef(
+    ({ viewableItems }: { viewableItems: Array<ViewToken & { section?: ExerciseSection }> }) => {
+      if (railInteractingRef.current) {
+        return;
+      }
+      let nextLetter: string | null = null;
+      let nextIndex = Number.POSITIVE_INFINITY;
+      for (const token of viewableItems) {
+        const title = (token as ViewToken & { section?: ExerciseSection }).section?.title;
+        if (!title) {
+          continue;
+        }
+        const idx = sectionIndexByLetterRef.current.get(title);
+        if (idx == null) {
+          continue;
+        }
+        if (idx < nextIndex) {
+          nextIndex = idx;
+          nextLetter = title;
+        }
+      }
+      if (nextLetter) {
+        setActiveLetter((current) => (current === nextLetter ? current : nextLetter));
+      }
+    },
+  );
 
   if (!visible) {
     return null;
@@ -146,6 +265,21 @@ export function ExercisePickerSheet({
             keyExtractor={(item) => item.id}
             stickySectionHeadersEnabled
             keyboardShouldPersistTaps="handled"
+            onScrollToIndexFailed={() => {
+              const pending = pendingScrollTargetRef.current;
+              if (!pending) {
+                return;
+              }
+              setTimeout(() => {
+                sectionListRef.current?.scrollToLocation({
+                  sectionIndex: pending.sectionIndex,
+                  itemIndex: 0,
+                  viewOffset: 18,
+                  animated: false,
+                });
+              }, 70);
+            }}
+            onViewableItemsChanged={onViewableItemsChangedRef.current}
             renderSectionHeader={({ section }) => (
               <View style={[styles.sectionHeader, { backgroundColor: 'rgba(13,17,22,0.94)' }]}>
                 <AppText muted weight="700">
@@ -198,25 +332,62 @@ export function ExercisePickerSheet({
             }
           />
 
-          <View style={styles.alphabetRail}>
-            {sections.map((section, sectionIndex) => (
-              <Pressable
-                key={section.title}
-                onPress={() =>
-                  sectionListRef.current?.scrollToLocation({
-                    sectionIndex,
-                    itemIndex: 0,
-                    animated: true,
-                  })
-                }
-                style={({ pressed }) => [styles.letterButton, pressed && { opacity: 0.8 }]}
+          {sections.length > 0 ? (
+            <>
+              <View
+                style={[styles.alphabetRail, { borderColor: theme.colors.border, backgroundColor: 'rgba(19,26,33,0.9)' }]}
+                onLayout={(event) => setRailHeight(event.nativeEvent.layout.height)}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={(event) => {
+                  railInteractingRef.current = true;
+                  lastRailLetterRef.current = null;
+                  handleRailLocation(event.nativeEvent.locationY, true);
+                }}
+                onResponderMove={(event) => handleRailLocation(event.nativeEvent.locationY, false)}
+                onResponderRelease={() => {
+                  railInteractingRef.current = false;
+                  lastRailLetterRef.current = null;
+                  clearOverlaySoon();
+                }}
+                onResponderTerminate={() => {
+                  railInteractingRef.current = false;
+                  lastRailLetterRef.current = null;
+                  clearOverlaySoon();
+                }}
               >
-                <AppText variant="small" style={{ color: theme.colors.muted }}>
-                  {section.title}
-                </AppText>
-              </Pressable>
-            ))}
-          </View>
+                {alphabetEntries.map((entry) => {
+                  const active = activeLetter === entry.letter;
+                  return (
+                    <View
+                      key={entry.letter}
+                      style={[
+                        styles.letterButton,
+                        active && styles.letterButtonActive,
+                        active && { borderColor: theme.colors.primary, backgroundColor: 'rgba(53,199,122,0.18)' },
+                      ]}
+                    >
+                      <AppText
+                        variant="small"
+                        weight={active ? '800' : '600'}
+                        style={{ color: active ? theme.colors.primary : theme.colors.muted }}
+                      >
+                        {entry.letter}
+                      </AppText>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {overlayLetter ? (
+                <View style={[styles.letterOverlay, { borderColor: theme.colors.border, backgroundColor: 'rgba(20,27,35,0.96)' }]}>
+                  <AppText variant="title" weight="800" style={{ color: theme.colors.primary }}>
+                    {overlayLetter}
+                  </AppText>
+                </View>
+              ) : null}
+            </>
+          ) : null}
         </View>
       </View>
 
@@ -401,13 +572,39 @@ const styles = StyleSheet.create({
   },
   alphabetRail: {
     alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 2,
+    paddingVertical: 4,
     position: 'absolute',
-    right: 0,
+    right: 2,
     top: 10,
   },
   letterButton: {
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    alignItems: 'center',
+    borderRadius: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'transparent',
+    justifyContent: 'center',
+    minHeight: 9,
+    minWidth: 14,
+    paddingHorizontal: 2,
+    paddingVertical: 1,
+  },
+  letterButtonActive: {
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  letterOverlay: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 62,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 32,
+    top: '46%',
+    transform: [{ translateY: -31 }],
+    width: 62,
   },
   filterMenuLayer: {
     ...StyleSheet.absoluteFillObject,

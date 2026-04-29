@@ -25,6 +25,7 @@ import { LiveWorkoutScreen } from '@/features/workouts/screens/LiveWorkoutScreen
 import { WorkoutDashboardScreen } from '@/features/workouts/screens/WorkoutDashboardScreen';
 import { WorkoutSummaryScreen } from '@/features/workouts/screens/WorkoutSummaryScreen';
 import { ActiveWorkoutOverlay } from '@/features/workouts/components/live/ActiveWorkoutOverlay';
+import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { BottomTabParamList, RootStackParamList } from '@/navigation/types';
 import { useAppStore } from '@/stores/appStore';
 import { useAppTheme } from '@/theme/theme';
@@ -36,8 +37,11 @@ function MainTabs() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
+  const hasActiveWorkout = useLiveWorkoutOverlayStore((state) => state.hasActiveWorkout);
+  const workoutExpanded = useLiveWorkoutOverlayStore((state) => state.expanded);
   const floatingBottom = Math.max(insets.bottom - 4, 12);
   const tabBarHorizontalInset = screenWidth < 360 ? 14 : 18;
+  const workoutCollapsed = hasActiveWorkout && !workoutExpanded;
 
   return (
     <View style={styles.tabsRoot}>
@@ -50,7 +54,11 @@ function MainTabs() {
             <>
               <LinearGradient
                 pointerEvents="none"
-                colors={['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']}
+                colors={
+                  workoutCollapsed
+                    ? ['rgba(20,26,34,0.62)', 'rgba(20,26,34,0.8)', 'rgba(20,26,34,0.94)']
+                    : ['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']
+                }
                 locations={[0, 0.36, 1]}
                 style={[
                   styles.tabBarVeil,
@@ -63,7 +71,11 @@ function MainTabs() {
               />
               <BlurView pointerEvents="none" intensity={48} tint="dark" style={styles.tabBarGlass}>
                 <LinearGradient
-                  colors={['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']}
+                  colors={
+                    workoutCollapsed
+                      ? ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.05)', 'rgba(20,26,34,0.52)']
+                      : ['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']
+                  }
                   locations={[0, 0.45, 1]}
                   style={StyleSheet.absoluteFill}
                 />
@@ -71,6 +83,7 @@ function MainTabs() {
             </>
           ),
           tabBarStyle: {
+            display: workoutExpanded ? 'none' : 'flex',
             backgroundColor: 'transparent',
             borderColor: 'transparent',
             borderTopWidth: 0,

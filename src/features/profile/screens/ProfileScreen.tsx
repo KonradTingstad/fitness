@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Download, LogOut, RefreshCw, Shield, Trash2, User } from 'lucide-react-native';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { AppText } from '@/components/AppText';
 import { Button } from '@/components/Button';
@@ -168,35 +168,15 @@ export function ProfileScreen() {
   const parsedHeightCm = parseNumberInput(heightCm);
   const parsedWeight = parseNumberInput(weightValue);
 
-  const dirty = useMemo(
-    () =>
-      firstName.trim() !== savedNames.firstName ||
-      lastName.trim() !== savedNames.lastName ||
-      parsedHeightCm !== profile.data.profile.heightCm ||
-      parsedWeight !== profile.data.profile.currentWeightKg ||
-      activityLevel !== profile.data.goals.activityLevel ||
-      bodyWeightUnit !== profile.data.units.bodyWeightUnit ||
-      loadUnit !== profile.data.units.loadUnit ||
-      volumeUnit !== profile.data.units.volumeUnit,
-    [
-      firstName,
-      lastName,
-      savedNames.firstName,
-      savedNames.lastName,
-      parsedHeightCm,
-      parsedWeight,
-      profile.data.profile.heightCm,
-      profile.data.profile.currentWeightKg,
-      activityLevel,
-      profile.data.goals.activityLevel,
-      bodyWeightUnit,
-      profile.data.units.bodyWeightUnit,
-      loadUnit,
-      profile.data.units.loadUnit,
-      volumeUnit,
-      profile.data.units.volumeUnit,
-    ],
-  );
+  const dirty =
+    firstName.trim() !== savedNames.firstName ||
+    lastName.trim() !== savedNames.lastName ||
+    parsedHeightCm !== profile.data.profile.heightCm ||
+    parsedWeight !== profile.data.profile.currentWeightKg ||
+    activityLevel !== profile.data.goals.activityLevel ||
+    bodyWeightUnit !== profile.data.units.bodyWeightUnit ||
+    loadUnit !== profile.data.units.loadUnit ||
+    volumeUnit !== profile.data.units.volumeUnit;
 
   const saveSettings = () => {
     if (parsedHeightCm === null || parsedWeight === null) {

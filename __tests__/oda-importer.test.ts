@@ -20,20 +20,56 @@ const {
   parseSitemapXml,
 } = importer;
 
-function createTextResponse(status: number, text: string) {
-  return {
-    ok: status >= 200 && status < 300,
+function createTextResponse(status: number, text: string): Response {
+  return new Response(text, {
     status,
     headers: {
-      get: () => null,
+      'content-type': 'application/xml',
     },
-    text: async () => text,
-    json: async () => JSON.parse(text),
-  };
+  });
 }
 
 describe('oda importer helpers', () => {
   const originalFetch = global.fetch;
+
+  function buildMinimalProduct({
+    id,
+    name,
+    brand,
+    nutritionTitle,
+  }: {
+    id: number;
+    name: string;
+    brand?: string;
+    nutritionTitle?: string;
+  }) {
+    return {
+      id,
+      name,
+      full_name: name,
+      brand: brand ?? null,
+      detailed_info: {
+        local: [
+          {
+            language: 'nb',
+            nutrition_info_table: {
+              title: nutritionTitle ?? 'Næringsinnhold per 100 g',
+              rows: [
+                { key: 'Energi', value: '2200 kJ / 530 kcal' },
+                { key: 'Fett', value: '34 g' },
+                { key: 'Karbohydrater', value: '50 g' },
+                { key: 'Protein', value: '6 g' },
+                { key: 'Salt', value: '1.3 g' },
+              ],
+            },
+            contents_table: {
+              rows: [],
+            },
+          },
+        ],
+      },
+    };
+  }
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -58,12 +94,13 @@ describe('oda importer helpers', () => {
     const nested1 = `<?xml version="1.0"?><urlset><url><loc>https://oda.com/no/products/36715-a/</loc></url></urlset>`;
     const nested2 = `<?xml version="1.0"?><urlset><url><loc>https://oda.com/no/products/36716-b/</loc></url><url><loc>https://oda.com/no/products/36715-a/</loc></url></urlset>`;
 
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url === 'https://oda.com/sitemap.xml') return createTextResponse(200, rootXml);
       if (url === 'https://oda.com/sitemap/nb/products/1.xml') return createTextResponse(200, nested1);
       if (url === 'https://oda.com/sitemap/nb/products/2.xml') return createTextResponse(200, nested2);
       return createTextResponse(404, '');
-    });
+    }) as typeof fetch;
 
     const tempCachePath = path.join(__dirname, 'fixtures', 'tmp-discovery-cache.json');
     if (fs.existsSync(tempCachePath)) {
@@ -218,6 +255,44 @@ describe('oda importer helpers', () => {
       sodium_mg: 40,
       caffeine_mg_per_can: 160,
     });
+  });
+
+  it('does not classify food names with "te" substring as drink', () => {
+    const chips = normalizeOdaProduct(
+      buildMinimalProduct({
+        id: 70001,
+        name: 'Mårud Salt og Pepper Potetgull',
+        brand: 'Mårud',
+      }),
+    );
+    expect(chips.skipReason).toBeNull();
+    expect(chips.normalized).toBeTruthy();
+    expect(chips.normalized.item_type).toBe('food');
+
+    const pate = normalizeOdaProduct(
+      buildMinimalProduct({
+        id: 70002,
+        name: 'Leverpostei Original',
+        brand: 'Stabburet',
+      }),
+    );
+    expect(pate.skipReason).toBeNull();
+    expect(pate.normalized).toBeTruthy();
+    expect(pate.normalized.item_type).toBe('food');
+  });
+
+  it('still classifies obvious drinks as drink', () => {
+    const drink = normalizeOdaProduct(
+      buildMinimalProduct({
+        id: 70003,
+        name: 'Battery Energidrikk',
+        brand: 'Battery',
+        nutritionTitle: 'Næringsinnhold per 100 ml',
+      }),
+    );
+    expect(drink.skipReason).toBeNull();
+    expect(drink.normalized).toBeTruthy();
+    expect(drink.normalized.item_type).toBe('drink');
   });
 
   it('parses and normalizes a real sample fixture', () => {

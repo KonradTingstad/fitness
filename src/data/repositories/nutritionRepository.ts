@@ -8,6 +8,7 @@ import {
   DiaryDay,
   DiaryEntry,
   FoodItem,
+  FoodItemType,
   MealSlot,
   NutritionTotals,
   Recipe,
@@ -21,6 +22,7 @@ type FoodRow = {
   user_id: string | null;
   brand_id: string | null;
   brand_name: string | null;
+  item_type: string | null;
   name: string;
   serving_size: number;
   serving_unit: string;
@@ -43,6 +45,7 @@ type SupabaseFoodSearchRow = {
   id: string;
   name: string;
   brand_name: string | null;
+  item_type?: string | null;
   serving_size: number | null;
   serving_unit: string | null;
   grams_per_serving: number | null;
@@ -113,10 +116,12 @@ export interface FoodSuggestion {
   lastLoggedAt: string;
 }
 
+export type FoodSearchItemType = FoodItemType | 'all';
+
 const CALORIE_STREAK_LOOKBACK_DAYS = 90;
 
 const SUPABASE_SEARCH_SELECT_EXTENDED =
-  'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom';
+  'id, name, brand_name, item_type, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom';
 const SUPABASE_SEARCH_SELECT_LEGACY =
   'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg, source_provider, is_verified, is_custom';
 
@@ -125,6 +130,14 @@ function isSupabaseMissingColumnError(error: { code?: string; message?: string }
   if (error.code === '42703') return true;
   const message = String(error.message ?? '');
   return message.includes('column') && message.includes('does not exist');
+}
+
+function normalizeFoodItemType(value: unknown): FoodItemType {
+  return value === 'drink' ? 'drink' : 'food';
+}
+
+function matchesFoodItemType(itemType: FoodItemType, filter: FoodSearchItemType): boolean {
+  return filter === 'all' ? true : itemType === filter;
 }
 
 export async function getDiary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<DiarySummary> {
@@ -202,7 +215,7 @@ export async function getCalorieGoalStreak(endLocalDate = toLocalDateKey(), user
   return calculateCalorieGoalStreak(endLocalDate, goalRow?.calorie_target ?? 0, caloriesByDate, 0.1, CALORIE_STREAK_LOOKBACK_DAYS);
 }
 
-export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Promise<FoodItem[]> {
+export async function searchFoodItems(query: string, itemType: FoodSearchItemType = 'food', userId = DEMO_USER_ID): Promise<FoodItem[]> {
   const db = await getDatabase();
   const search = `%${query.trim()}%`;
   const localRows = await db.getAllAsync<FoodRow>(
@@ -210,13 +223,18 @@ export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Pro
      WHERE deleted_at IS NULL
        AND (user_id IS NULL OR user_id = ?)
        AND (? = '%%' OR name LIKE ? OR brand_name LIKE ? OR barcode LIKE ?)
+       AND (
+         ? = 'all'
+         OR (? = 'food' AND (item_type = 'food' OR item_type IS NULL OR item_type = ''))
+         OR (? = 'drink' AND item_type = 'drink')
+       )
      ORDER BY is_custom DESC, is_verified DESC, name ASC
      LIMIT 50`,
-    [userId, search, search, search, search],
+    [userId, search, search, search, search, itemType, itemType, itemType],
   );
 
   const localFoods = localRows.map(mapFood);
-  const remoteFoods = await searchSupabaseFoodItems(query);
+  const remoteFoods = await searchSupabaseFoodItems(query, itemType);
   if (remoteFoods.length) {
     try {
       await cacheFoodItemsInLocalDb(remoteFoods);
@@ -226,27 +244,33 @@ export async function searchFoodItems(query: string, userId = DEMO_USER_ID): Pro
   }
 
   if (!remoteFoods.length) {
-    return localFoods;
+    return localFoods.filter((food) => matchesFoodItemType(food.itemType, itemType));
   }
 
-  return mergeFoodSearchResults(localFoods, remoteFoods);
+  return mergeFoodSearchResults(localFoods, remoteFoods).filter((food) => matchesFoodItemType(food.itemType, itemType));
 }
 
-export async function getRecentFoods(userId = DEMO_USER_ID): Promise<FoodItem[]> {
+export async function getRecentFoods(itemType: FoodSearchItemType = 'food', userId = DEMO_USER_ID): Promise<FoodItem[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<FoodRow>(
     `SELECT DISTINCT f.*
      FROM diary_entries e
      JOIN food_items f ON f.id = e.food_item_id
-     WHERE e.user_id = ? AND e.deleted_at IS NULL
+     WHERE e.user_id = ?
+       AND e.deleted_at IS NULL
+       AND (
+         ? = 'all'
+         OR (? = 'food' AND (f.item_type = 'food' OR f.item_type IS NULL OR f.item_type = ''))
+         OR (? = 'drink' AND f.item_type = 'drink')
+       )
      ORDER BY e.logged_at DESC
      LIMIT 10`,
-    [userId],
+    [userId, itemType, itemType, itemType],
   );
   return rows.map(mapFood);
 }
 
-export async function getFrequentlyLoggedFoods(userId = DEMO_USER_ID): Promise<FoodSuggestion[]> {
+export async function getFrequentlyLoggedFoods(itemType: FoodSearchItemType = 'food', userId = DEMO_USER_ID): Promise<FoodSuggestion[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<FoodRow & { total_logs: number; common_meal_slot: MealSlot; last_logged_at: string }>(
     `SELECT
@@ -268,10 +292,15 @@ export async function getFrequentlyLoggedFoods(userId = DEMO_USER_ID): Promise<F
      WHERE e.user_id = ?
        AND e.deleted_at IS NULL
        AND f.deleted_at IS NULL
+       AND (
+         ? = 'all'
+         OR (? = 'food' AND (f.item_type = 'food' OR f.item_type IS NULL OR f.item_type = ''))
+         OR (? = 'drink' AND f.item_type = 'drink')
+       )
      GROUP BY f.id
      ORDER BY total_logs DESC, last_logged_at DESC
      LIMIT 8`,
-    [userId, userId],
+    [userId, userId, itemType, itemType, itemType],
   );
 
   return rows.map((row) => ({
@@ -411,20 +440,21 @@ export async function addWater(amountMl: number, localDate = toLocalDateKey(), u
   await enqueueSync('water_log', id, 'insert', { localDate, amountMl });
 }
 
-export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_ID): Promise<string> {
+export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_ID, itemType: FoodItemType = 'food'): Promise<string> {
   const db = await getDatabase();
   const id = createId('food');
   const customId = createId('custom_food');
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO food_items
-    (id, user_id, brand_id, brand_name, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       userId,
       null,
       form.brandName ?? null,
+      itemType,
       form.name,
       form.servingSize,
       form.servingUnit,
@@ -454,7 +484,7 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [customId, userId, id, now, now, null, 'pending', 1],
   );
-  await enqueueSync('food_item', id, 'insert', form);
+  await enqueueSync('food_item', id, 'insert', { ...form, itemType });
   return id;
 }
 
@@ -718,7 +748,7 @@ async function getOrCreateDiaryDay(localDate: string, userId: string): Promise<s
   return id;
 }
 
-async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
+async function searchSupabaseFoodItems(query: string, itemType: FoodSearchItemType): Promise<FoodItem[]> {
   if (!isSupabaseConfigured || !supabase) {
     return [];
   }
@@ -732,17 +762,15 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
     const rpcResponse = await supabase.rpc('search_food_items_snapshot', {
       search_query: trimmed,
       max_results: 50,
+      search_item_type: itemType === 'all' ? null : itemType,
     });
 
     if (!rpcResponse.error && Array.isArray(rpcResponse.data)) {
-      return rpcResponse.data.map(mapSupabaseSearchFood);
+      return rpcResponse.data.map(mapSupabaseSearchFood).filter((food) => matchesFoodItemType(food.itemType, itemType));
     }
 
     const likeSearch = `%${trimmed}%`;
-    let fallback: {
-      data: SupabaseFoodSearchRow[] | null;
-      error: { code?: string; message?: string } | null;
-    } = await supabase
+    let fallbackQuery = supabase
       .from('food_items')
       .select(SUPABASE_SEARCH_SELECT_EXTENDED)
       .is('deleted_at', null)
@@ -751,8 +779,17 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
       .order('is_verified', { ascending: false })
       .order('name', { ascending: true })
       .limit(50);
+    if (itemType !== 'all') {
+      fallbackQuery = fallbackQuery.eq('item_type', itemType);
+    }
+    let fallback: {
+      data: SupabaseFoodSearchRow[] | null;
+      error: { code?: string; message?: string } | null;
+    } = await fallbackQuery;
+    let usedLegacyFallback = false;
 
     if (isSupabaseMissingColumnError(fallback.error)) {
+      usedLegacyFallback = true;
       fallback = await supabase
         .from('food_items')
         .select(SUPABASE_SEARCH_SELECT_LEGACY)
@@ -768,7 +805,11 @@ async function searchSupabaseFoodItems(query: string): Promise<FoodItem[]> {
       return [];
     }
 
-    return fallback.data.map(mapSupabaseSearchFood);
+    const mapped = fallback.data.map(mapSupabaseSearchFood);
+    if (usedLegacyFallback && itemType === 'drink') {
+      return [];
+    }
+    return mapped.filter((food) => matchesFoodItemType(food.itemType, itemType));
   } catch {
     return [];
   }
@@ -793,12 +834,13 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
 
     await db.runAsync(
       `INSERT INTO food_items
-      (id, user_id, brand_id, brand_name, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         user_id = excluded.user_id,
         brand_id = excluded.brand_id,
         brand_name = excluded.brand_name,
+        item_type = excluded.item_type,
         name = excluded.name,
         serving_size = excluded.serving_size,
         serving_unit = excluded.serving_unit,
@@ -823,6 +865,7 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         food.userId ?? null,
         food.brandId ?? null,
         food.brandName ?? null,
+        food.itemType,
         food.name,
         servingSize,
         servingUnit,
@@ -868,6 +911,7 @@ function mapSupabaseSearchFood(row: SupabaseFoodSearchRow): FoodItem {
     user_id: null,
     brand_id: null,
     brand_name: row.brand_name,
+    item_type: row.item_type ?? 'food',
     name: row.name,
     serving_size: row.serving_size ?? 100,
     serving_unit: row.serving_unit ?? 'g',
@@ -906,6 +950,7 @@ function mapFood(row: FoodRow): FoodItem {
     userId: row.user_id,
     brandId: row.brand_id,
     brandName: row.brand_name,
+    itemType: normalizeFoodItemType(row.item_type),
     name: row.name,
     servingSize: row.serving_size,
     servingUnit: row.serving_unit,

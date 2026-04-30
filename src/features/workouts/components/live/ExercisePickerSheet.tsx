@@ -1,6 +1,7 @@
 import { X, Plus, Check } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, SectionList, StyleSheet, TextInput, View, ViewToken } from 'react-native';
+import { Modal, Pressable, SectionList, StyleSheet, TextInput, View, ViewToken } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
 import { Exercise } from '@/domain/models';
@@ -10,6 +11,7 @@ interface Props {
   visible: boolean;
   exercises: Exercise[];
   selectedIds: Set<string>;
+  lockedIds?: Set<string>;
   onToggleSelection: (exerciseId: string) => void;
   onClose: () => void;
   onAddSelected: () => void;
@@ -27,12 +29,14 @@ export function ExercisePickerSheet({
   visible,
   exercises,
   selectedIds,
+  lockedIds,
   onToggleSelection,
   onClose,
   onAddSelected,
   previousPerformanceByExerciseId,
 }: Props) {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const sectionListRef = useRef<SectionList<Exercise, ExerciseSection>>(null);
   const [query, setQuery] = useState('');
   const [bodyPart, setBodyPart] = useState('Any Body Part');
@@ -213,9 +217,20 @@ export function ExercisePickerSheet({
   }
 
   return (
-    <View style={styles.overlay} pointerEvents="box-none">
-      <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={[styles.sheet, { borderColor: theme.colors.border, backgroundColor: 'rgba(15,21,28,0.99)' }]}>
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.overlay} pointerEvents="box-none">
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View
+          style={[
+            styles.sheet,
+            {
+              borderColor: theme.colors.border,
+              backgroundColor: 'rgba(15,21,28,0.99)',
+              marginTop: Math.max(8, insets.top + 4),
+              paddingBottom: Math.max(16, insets.bottom + 10),
+            },
+          ]}
+        >
         <View style={styles.handleWrap}>
           <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
         </View>
@@ -288,7 +303,8 @@ export function ExercisePickerSheet({
               </View>
             )}
             renderItem={({ item }) => {
-              const selected = selectedIds.has(item.id);
+              const locked = lockedIds?.has(item.id) ?? false;
+              const selected = selectedIds.has(item.id) || locked;
               const previous = previousPerformanceByExerciseId[item.id];
               return (
                 <View style={[styles.row, { borderBottomColor: theme.colors.border }]}>
@@ -307,13 +323,14 @@ export function ExercisePickerSheet({
                     ) : null}
                   </View>
                   <Pressable
+                    disabled={locked}
                     onPress={() => onToggleSelection(item.id)}
                     style={({ pressed }) => [
                       styles.rowAdd,
                       {
                         borderColor: selected ? theme.colors.primary : theme.colors.border,
                         backgroundColor: selected ? 'rgba(53,199,122,0.2)' : theme.colors.surfaceAlt,
-                        opacity: pressed ? 0.82 : 1,
+                        opacity: locked ? 0.62 : pressed ? 0.82 : 1,
                       },
                     ]}
                   >
@@ -389,44 +406,45 @@ export function ExercisePickerSheet({
             </>
           ) : null}
         </View>
-      </View>
-
-      {filterMenu ? (
-        <View style={styles.filterMenuLayer} pointerEvents="box-none">
-          <Pressable style={styles.backdrop} onPress={() => setFilterMenu(null)} />
-          <View style={[styles.filterMenu, { borderColor: theme.colors.border, backgroundColor: 'rgba(22,27,34,0.98)' }]}>
-            {(filterMenu === 'bodyPart' ? bodyPartOptions : categoryOptions).map((option) => {
-              const active = filterMenu === 'bodyPart' ? option === bodyPart : option === category;
-              return (
-                <Pressable
-                  key={option}
-                  onPress={() => {
-                    if (filterMenu === 'bodyPart') {
-                      setBodyPart(option);
-                    } else {
-                      setCategory(option);
-                    }
-                    setFilterMenu(null);
-                  }}
-                  style={({ pressed }) => [
-                    styles.filterOption,
-                    {
-                      borderColor: active ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: active ? 'rgba(53,199,122,0.16)' : theme.colors.surfaceAlt,
-                      opacity: pressed ? 0.82 : 1,
-                    },
-                  ]}
-                >
-                  <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
-                    {option}
-                  </AppText>
-                </Pressable>
-              );
-            })}
-          </View>
         </View>
-      ) : null}
-    </View>
+
+        {filterMenu ? (
+          <View style={styles.filterMenuLayer} pointerEvents="box-none">
+            <Pressable style={styles.backdrop} onPress={() => setFilterMenu(null)} />
+            <View style={[styles.filterMenu, { borderColor: theme.colors.border, backgroundColor: 'rgba(22,27,34,0.98)' }]}>
+              {(filterMenu === 'bodyPart' ? bodyPartOptions : categoryOptions).map((option) => {
+                const active = filterMenu === 'bodyPart' ? option === bodyPart : option === category;
+                return (
+                  <Pressable
+                    key={option}
+                    onPress={() => {
+                      if (filterMenu === 'bodyPart') {
+                        setBodyPart(option);
+                      } else {
+                        setCategory(option);
+                      }
+                      setFilterMenu(null);
+                    }}
+                    style={({ pressed }) => [
+                      styles.filterOption,
+                      {
+                        borderColor: active ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: active ? 'rgba(53,199,122,0.16)' : theme.colors.surfaceAlt,
+                        opacity: pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
+                      {option}
+                    </AppText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -469,9 +487,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
-    maxHeight: '86%',
-    minHeight: '72%',
-    paddingBottom: 16,
+    maxHeight: '100%',
+    minHeight: '92%',
     paddingHorizontal: 14,
     paddingTop: 6,
   },

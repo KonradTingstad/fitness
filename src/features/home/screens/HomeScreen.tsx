@@ -1,7 +1,7 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronRight, Clock, Droplets, Dumbbell, Plus, User, Utensils, Wheat, X } from 'lucide-react-native';
+import { Check, ChevronRight, Clock, Droplets, Dumbbell, Plus, User, Utensils, Wheat, X } from 'lucide-react-native';
 import { type ElementRef, useCallback, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -280,6 +280,7 @@ export function HomeScreen() {
   const fatProgress = fatTarget <= 0 ? 0 : Math.min(1, Math.max(0, fat / fatTarget));
   const headerTitle = getOverviewTitle(data.userDisplayName);
   const todaysActivity = programSchedule.data?.[0] ?? null;
+  const hasCompletedWorkoutToday = data.today.workoutStatus === 'completed';
   const isStrengthPlan = todaysActivity?.activityType === 'strength';
   const plannedRoutine = todaysActivity?.routineId ? routines.data?.find((routine) => routine.id === todaysActivity.routineId) ?? null : null;
   const plannedExercisePreview = plannedRoutine?.exercises
@@ -525,7 +526,7 @@ export function HomeScreen() {
               <Button
                 label="Log meal"
                 icon={Utensils}
-                onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate })}
+                onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate, mode: 'food' })}
                 style={styles.actionButton}
               />
             </View>
@@ -559,7 +560,17 @@ export function HomeScreen() {
                       ) : null}
                     </View>
                   </View>
-                  {isStrengthPlan ? (
+                  {hasCompletedWorkoutToday ? (
+                    <View style={[styles.planCompletedNotice, { borderColor: theme.colors.primary, backgroundColor: 'rgba(30,215,96,0.1)' }]}>
+                      <View style={[styles.planCompletedIcon, { backgroundColor: theme.colors.primary }]}>
+                        <Check size={14} color="#08100C" strokeWidth={2.8} />
+                      </View>
+                      <View style={styles.planCompletedCopy}>
+                        <AppText weight="800" style={{ color: theme.colors.primary }}>Workout complete</AppText>
+                        <AppText muted variant="small">Great work. You&apos;ve completed a workout today.</AppText>
+                      </View>
+                    </View>
+                  ) : isStrengthPlan ? (
                     <Pressable
                       disabled={startWorkout.isPending}
                       onPress={startPlannedStrengthWorkout}
@@ -582,6 +593,16 @@ export function HomeScreen() {
                     </View>
                   )}
                 </>
+              ) : hasCompletedWorkoutToday ? (
+                <View style={[styles.planCompletedNotice, { borderColor: theme.colors.primary, backgroundColor: 'rgba(30,215,96,0.1)' }]}>
+                  <View style={[styles.planCompletedIcon, { backgroundColor: theme.colors.primary }]}>
+                    <Check size={14} color="#08100C" strokeWidth={2.8} />
+                  </View>
+                  <View style={styles.planCompletedCopy}>
+                    <AppText weight="800" style={{ color: theme.colors.primary }}>Workout complete</AppText>
+                    <AppText muted variant="small">Great work. You&apos;ve completed a workout today.</AppText>
+                  </View>
+                </View>
               ) : (
                 <View style={styles.emptyState}>
                   <AppText weight="800">No activity scheduled today</AppText>
@@ -1088,6 +1109,26 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 52,
     paddingHorizontal: 14,
+  },
+  planCompletedNotice: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  planCompletedIcon: {
+    alignItems: 'center',
+    borderRadius: 999,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  planCompletedCopy: {
+    flex: 1,
+    gap: 2,
   },
   planDot: {
     borderRadius: 999,

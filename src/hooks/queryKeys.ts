@@ -1,3 +1,5 @@
+type FoodSearchItemTypeKey = 'food' | 'drink' | 'all';
+
 export const queryKeys = {
   dashboard: ['dashboard'] as const,
   routines: ['routines'] as const,
@@ -12,9 +14,9 @@ export const queryKeys = {
   diary: (date: string) => ['diary', date] as const,
   weeklyCalories: (endDate: string) => ['weeklyCalories', endDate] as const,
   calorieStreak: (endDate: string) => ['calorieStreak', endDate] as const,
-  foodSearch: (query: string) => ['foodSearch', query] as const,
-  recentFoods: ['recentFoods'] as const,
-  frequentlyLoggedFoods: ['frequentlyLoggedFoods'] as const,
+  foodSearch: (query: string, itemType: FoodSearchItemTypeKey = 'food') => ['foodSearch', itemType, query] as const,
+  recentFoods: (itemType: FoodSearchItemTypeKey = 'food') => ['recentFoods', itemType] as const,
+  frequentlyLoggedFoods: (itemType: FoodSearchItemTypeKey = 'food') => ['frequentlyLoggedFoods', itemType] as const,
   nutritionLibrary: ['nutritionLibrary'] as const,
   mealsPerDayTarget: ['mealsPerDayTarget'] as const,
   profile: ['profile'] as const,

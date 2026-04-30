@@ -6,6 +6,7 @@ import { StyleSheet, View } from 'react-native';
 import { AppText } from '@/components/AppText';
 import { EmptyState } from '@/components/EmptyState';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
+import { FoodItemType } from '@/domain/models';
 import { RootStackParamList } from '@/navigation/types';
 
 type Route = RouteProp<RootStackParamList, 'BarcodeScanner'>;
@@ -14,6 +15,8 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export function BarcodeScannerScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
+  const mode: FoodItemType = route.params.mode ?? 'food';
+  const modeLabel = mode === 'drink' ? 'drink' : 'food';
   return (
     <NutritionScreen>
       <NutritionCard>
@@ -28,11 +31,11 @@ export function BarcodeScannerScreen() {
       <EmptyState
         icon={Barcode}
         title="Provider not configured"
-        body="The MVP stores the architecture for barcode search. Add a public barcode provider or Supabase Edge Function and this screen can resolve codes into food items."
+        body={`The MVP stores the architecture for barcode search. Add a public barcode provider or Supabase Edge Function and this screen can resolve codes into ${modeLabel} items.`}
         actionLabel="Search instead"
         onAction={() => navigation.navigate('FoodSearch', route.params)}
       />
-      <NutritionButton label="Add custom food" icon={Search} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} />
+      <NutritionButton label={`Add custom ${modeLabel}`} icon={Search} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} />
     </NutritionScreen>
   );
 }

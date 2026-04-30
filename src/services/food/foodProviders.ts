@@ -10,10 +10,10 @@ export interface FoodSearchProvider {
 export const localFoodProvider: FoodSearchProvider = {
   name: 'local',
   async search(query: string) {
-    return searchFoodItems(query);
+    return searchFoodItems(query, 'all');
   },
   async lookupBarcode(barcode: string) {
-    const results = await searchFoodItems(barcode);
+    const results = await searchFoodItems(barcode, 'all');
     return results.find((food) => food.barcode === barcode) ?? null;
   },
 };

@@ -10,6 +10,7 @@ export type DistanceUnit = 'km' | 'mi';
 export type VolumeUnit = 'ml' | 'oz';
 export type EnergyUnit = 'kcal' | 'kj';
 export type MealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snacks';
+export type FoodItemType = 'food' | 'drink';
 export type WorkoutStatus = 'active' | 'completed' | 'discarded';
 export type SetType =
   | 'warmup'
@@ -181,6 +182,7 @@ export interface FoodItem {
   userId?: ID | null;
   brandId?: ID | null;
   brandName?: string | null;
+  itemType: FoodItemType;
   name: string;
   servingSize: number;
   servingUnit: string;

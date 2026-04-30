@@ -85,20 +85,22 @@ async function seedExerciseLibrary(db: SQLite.SQLiteDatabase): Promise<void> {
 async function seedFoodLibrary(db: SQLite.SQLiteDatabase): Promise<void> {
   const fields = audit();
   const foods = [
-    ['food_greek_yogurt', 'Nordic Dairy', 'Greek Yogurt 2%', 1, 'cup', 225, 150, 23, 8, 4, 0, 5, 95, 'seed', 1],
-    ['food_oats', null, 'Rolled Oats', 0.5, 'cup', 40, 150, 5, 27, 3, 4, 1, 0, 'seed', 1],
-    ['food_chicken_breast', null, 'Chicken Breast, cooked', 100, 'g', 100, 165, 31, 0, 3.6, 0, 0, 74, 'seed', 1],
-    ['food_rice', null, 'Jasmine Rice, cooked', 1, 'cup', 158, 205, 4.3, 44.5, 0.4, 0.6, 0.1, 2, 'seed', 1],
-    ['food_banana', null, 'Banana', 1, 'medium', 118, 105, 1.3, 27, 0.4, 3.1, 14.4, 1, 'seed', 1],
-    ['food_whey', 'FormFuel', 'Whey Protein', 1, 'scoop', 32, 125, 25, 3, 1.5, 0, 1, 90, 'seed', 1],
-    ['food_salmon', null, 'Salmon Fillet', 100, 'g', 100, 208, 20, 0, 13, 0, 0, 59, 'seed', 1],
-    ['food_avocado', null, 'Avocado', 0.5, 'fruit', 75, 120, 1.5, 6, 11, 5, 0.5, 5, 'seed', 1],
+    ['food_greek_yogurt', 'Nordic Dairy', 'food', 'Greek Yogurt 2%', 1, 'cup', 225, 150, 23, 8, 4, 0, 5, 95, 'seed', 1],
+    ['food_oats', null, 'food', 'Rolled Oats', 0.5, 'cup', 40, 150, 5, 27, 3, 4, 1, 0, 'seed', 1],
+    ['food_chicken_breast', null, 'food', 'Chicken Breast, cooked', 100, 'g', 100, 165, 31, 0, 3.6, 0, 0, 74, 'seed', 1],
+    ['food_rice', null, 'food', 'Jasmine Rice, cooked', 1, 'cup', 158, 205, 4.3, 44.5, 0.4, 0.6, 0.1, 2, 'seed', 1],
+    ['food_banana', null, 'food', 'Banana', 1, 'medium', 118, 105, 1.3, 27, 0.4, 3.1, 14.4, 1, 'seed', 1],
+    ['food_whey', 'FormFuel', 'food', 'Whey Protein', 1, 'scoop', 32, 125, 25, 3, 1.5, 0, 1, 90, 'seed', 1],
+    ['food_salmon', null, 'food', 'Salmon Fillet', 100, 'g', 100, 208, 20, 0, 13, 0, 0, 59, 'seed', 1],
+    ['food_avocado', null, 'food', 'Avocado', 0.5, 'fruit', 75, 120, 1.5, 6, 11, 5, 0.5, 5, 'seed', 1],
+    ['drink_sparkling_water', 'FormFuel', 'drink', 'Sparkling Water', 330, 'ml', 330, 0, 0, 0, 0, 0, 0, 15, 'seed', 1],
+    ['drink_orange_juice', null, 'drink', 'Orange Juice', 250, 'ml', 250, 110, 2, 25, 0, 0.5, 21, 5, 'seed', 1],
   ];
   for (const food of foods) {
     await db.runAsync(
       `INSERT INTO food_items
-      (id, user_id, brand_id, brand_name, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         food[0],
         null,
@@ -117,6 +119,7 @@ async function seedFoodLibrary(db: SQLite.SQLiteDatabase): Promise<void> {
         food[12],
         food[13],
         food[14],
+        food[15],
         0,
         fields.createdAt,
         fields.updatedAt,

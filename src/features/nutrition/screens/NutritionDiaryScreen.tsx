@@ -1,4 +1,4 @@
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import {
@@ -23,7 +23,7 @@ import {
   Utensils,
   Wheat,
 } from 'lucide-react-native';
-import { ComponentType, useEffect, useMemo, useRef, useState } from 'react';
+import { ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -544,6 +544,7 @@ function MealSummaryCard({
   tint,
   onToggle,
   onAddFood,
+  onAddDrink,
   onQuickAddLastFood,
   onRepeatPreviousMeal,
 }: {
@@ -559,6 +560,7 @@ function MealSummaryCard({
   tint: string;
   onToggle: () => void;
   onAddFood: () => void;
+  onAddDrink: () => void;
   onQuickAddLastFood: () => void;
   onRepeatPreviousMeal: () => void;
 }) {
@@ -674,6 +676,14 @@ function MealSummaryCard({
                 <Plus size={16} color={color} strokeWidth={2.4} />
                 <AppText weight="800" style={{ color }}>
                   Add food
+                </AppText>
+                <ChevronRight size={16} color={theme.colors.muted} />
+              </Pressable>
+
+              <Pressable accessibilityRole="button" onPress={onAddDrink} style={({ pressed }) => [styles.mealActionPill, { opacity: pressed ? 0.82 : 1 }]}>
+                <Droplets size={16} color={color} strokeWidth={2.4} />
+                <AppText weight="800" style={{ color }}>
+                  Add drink
                 </AppText>
                 <ChevronRight size={16} color={theme.colors.muted} />
               </Pressable>
@@ -872,15 +882,23 @@ export function NutritionDiaryScreen() {
     mealsPerDayTarget: '4',
   });
 
+  useFocusEffect(
+    useCallback(() => {
+      const currentDayKey = toLocalDateKey();
+      setSelectedDate((current) => (current === currentDayKey ? current : currentDayKey));
+      return undefined;
+    }, []),
+  );
+
   const diary = useDiary(selectedDate);
   const yesterdayDiary = useDiary(yesterdayDate);
   const profile = useProfileBundle();
   const mealsPerDayTarget = useMealsPerDayTarget();
   const nutritionLibrary = useNutritionLibrary();
-  const recentFoods = useRecentFoods();
-  const searchedFoods = useFoodSearch(searchQuery);
-  const foodCatalog = useFoodSearch('');
-  const frequentlyLoggedFoods = useFrequentlyLoggedFoods();
+  const recentFoods = useRecentFoods('food');
+  const searchedFoods = useFoodSearch(searchQuery, 'food');
+  const foodCatalog = useFoodSearch('', 'all');
+  const frequentlyLoggedFoods = useFrequentlyLoggedFoods('food');
   const weeklyCalories = useWeeklyCalories(selectedDate);
   const calorieStreak = useCalorieStreak(selectedDate);
 
@@ -890,6 +908,13 @@ export function NutritionDiaryScreen() {
       setRecentlyAddedSavedMealId((current) => (current === savedMealId ? null : current));
     }, 820);
   };
+
+  const invalidateFoodCaches = () =>
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        Array.isArray(query.queryKey)
+        && (query.queryKey[0] === 'foodSearch' || query.queryKey[0] === 'recentFoods' || query.queryKey[0] === 'frequentlyLoggedFoods'),
+    });
 
   const quickAdd = useMutation({
     mutationFn: (input: { foodItemId: string; mealSlot: MealSlot; servings?: number; food?: FoodItem }) =>
@@ -905,8 +930,7 @@ export function NutritionDiaryScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
+      invalidateFoodCaches();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     onError: (error) => Alert.alert('Meal quick add', error instanceof Error ? error.message : 'Unable to add food.'),
@@ -932,8 +956,7 @@ export function NutritionDiaryScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
+      invalidateFoodCaches();
     },
     onError: (error) => Alert.alert('Repeat previous meal', error instanceof Error ? error.message : 'Unable to repeat meal.'),
   });
@@ -955,8 +978,7 @@ export function NutritionDiaryScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
+      invalidateFoodCaches();
       flashSavedMealAdded(input.savedMealId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
@@ -1465,7 +1487,7 @@ export function NutritionDiaryScreen() {
 
   const logMealFromGoals = () => {
     void Haptics.selectionAsync();
-    navigation.navigate('FoodSearch', { mealSlot: defaultSavedMealSlot, localDate: selectedDate });
+    navigation.navigate('FoodSearch', { mealSlot: defaultSavedMealSlot, localDate: selectedDate, mode: 'food' });
   };
 
   const logWaterFromGoals = () => {
@@ -1543,7 +1565,7 @@ export function NutritionDiaryScreen() {
       saveGoalSettings();
       return;
     }
-    navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate });
+    navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' });
   };
 
   const headerAction = tab === 'goals'
@@ -1627,16 +1649,17 @@ export function NutritionDiaryScreen() {
             color={section.color}
             tint={section.tint}
             onToggle={() => toggleMealSlot(section.slot)}
-            onAddFood={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate })}
+            onAddFood={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate, mode: 'food' })}
+            onAddDrink={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate, mode: 'drink' })}
             onQuickAddLastFood={() => quickAddLastMealFood(section.slot, section.entries, section.previousEntries)}
             onRepeatPreviousMeal={() => repeatMealFromYesterday(section.slot, section.previousEntries)}
           />
         ))}
       </View>
 
-      <NutritionButton label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate })} style={styles.primaryCta} />
+      <NutritionButton label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' })} style={styles.primaryCta} />
 
-      <NutritionCard onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate: selectedDate })} style={styles.secondaryQuickAction}>
+      <NutritionCard onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' })} style={styles.secondaryQuickAction}>
         <View style={styles.quickActionCopy}>
           <View style={[styles.barcodeIconWrap, { backgroundColor: theme.colors.surfaceAlt }]}>
             <Barcode size={20} color={theme.colors.primary} />
@@ -1666,7 +1689,7 @@ export function NutritionDiaryScreen() {
           />
         </View>
         <Pressable
-          onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: activeSearchMealSlot, localDate: selectedDate })}
+          onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: activeSearchMealSlot, localDate: selectedDate, mode: 'food' })}
           style={({ pressed }) => [
             styles.searchAction,
             { opacity: pressed ? 0.84 : 1 },

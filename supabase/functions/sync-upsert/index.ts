@@ -382,6 +382,7 @@ Deno.serve(async (req) => {
           user_id: userId,
           name: payload.name,
           brand_name: (payload.brandName as string | undefined) ?? null,
+          item_type: payload.itemType === 'drink' ? 'drink' : 'food',
           serving_size: payload.servingSize,
           serving_unit: payload.servingUnit,
           grams_per_serving: payload.gramsPerServing,

@@ -20,6 +20,10 @@ const diaryEntryColumns: ReadonlyArray<{ name: string; definition: string }> = [
   { name: 'total_fat_g', definition: 'REAL' },
 ];
 
+const foodItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'item_type', definition: "TEXT NOT NULL DEFAULT 'food'" },
+];
+
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
     databasePromise = SQLite.openDatabaseAsync(DB_NAME);
@@ -40,11 +44,33 @@ async function ensureDiaryEntryColumns(db: SQLite.SQLiteDatabase): Promise<void>
   }
 }
 
+async function ensureFoodItemColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(food_items);');
+  const existingColumns = new Set(columns.map((column) => column.name));
+
+  for (const column of foodItemColumns) {
+    if (existingColumns.has(column.name)) {
+      continue;
+    }
+
+    await db.execAsync(`ALTER TABLE food_items ADD COLUMN ${column.name} ${column.definition};`);
+  }
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET item_type = 'food'
+     WHERE item_type IS NULL OR item_type NOT IN ('food', 'drink')`,
+  );
+
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_items_item_type ON food_items(item_type);');
+}
+
 export async function initializeDatabase(): Promise<void> {
   const db = await getDatabase();
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(MIGRATION_SQL);
   await ensureDiaryEntryColumns(db);
+  await ensureFoodItemColumns(db);
   const version = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [
     'schema_version',
   ]);
@@ -365,6 +391,7 @@ CREATE TABLE IF NOT EXISTS food_items (
   user_id TEXT,
   brand_id TEXT,
   brand_name TEXT,
+  item_type TEXT NOT NULL DEFAULT 'food' CHECK (item_type IN ('food', 'drink')),
   name TEXT NOT NULL,
   serving_size REAL NOT NULL,
   serving_unit TEXT NOT NULL,

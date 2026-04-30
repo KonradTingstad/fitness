@@ -22,6 +22,7 @@ import { ProgressScreen } from '@/features/progress/screens/ProgressScreen';
 import { ExerciseHistoryScreen } from '@/features/workouts/screens/ExerciseHistoryScreen';
 import { EditProgramScreen } from '@/features/workouts/screens/EditProgramScreen';
 import { LiveWorkoutScreen } from '@/features/workouts/screens/LiveWorkoutScreen';
+import { TemplateBuilderScreen } from '@/features/workouts/screens/TemplateBuilderScreen';
 import { WorkoutDashboardScreen } from '@/features/workouts/screens/WorkoutDashboardScreen';
 import { WorkoutSummaryScreen } from '@/features/workouts/screens/WorkoutSummaryScreen';
 import { ActiveWorkoutOverlay } from '@/features/workouts/components/live/ActiveWorkoutOverlay';
@@ -52,36 +53,18 @@ function MainTabs() {
           tabBarActiveTintColor: theme.colors.primary,
           tabBarInactiveTintColor: theme.colors.muted,
           tabBarBackground: () => (
-            <>
+            <BlurView pointerEvents="none" intensity={60} tint="dark" style={styles.tabBarGlass}>
               <LinearGradient
-                pointerEvents="none"
                 colors={
                   workoutCollapsed
-                    ? ['rgba(20,26,34,0.62)', 'rgba(20,26,34,0.8)', 'rgba(20,26,34,0.94)']
-                    : ['rgba(8,12,18,0)', 'rgba(8,12,18,0.28)', 'rgba(8,12,18,0.72)']
+                    ? ['rgba(255,255,255,0.16)', 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.04)']
+                    : ['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.09)', 'rgba(255,255,255,0.03)']
                 }
-                locations={[0, 0.36, 1]}
-                style={[
-                  styles.tabBarVeil,
-                  {
-                    left: -tabBarHorizontalInset,
-                    right: -tabBarHorizontalInset,
-                    bottom: -floatingBottom - 4,
-                  },
-                ]}
+                locations={[0, 0.58, 1]}
+                style={StyleSheet.absoluteFill}
               />
-              <BlurView pointerEvents="none" intensity={48} tint="dark" style={styles.tabBarGlass}>
-                <LinearGradient
-                  colors={
-                    workoutCollapsed
-                      ? ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.05)', 'rgba(20,26,34,0.52)']
-                      : ['rgba(255,255,255,0.18)', 'rgba(255,255,255,0.06)', 'rgba(8,12,18,0.36)']
-                  }
-                  locations={[0, 0.45, 1]}
-                  style={StyleSheet.absoluteFill}
-                />
-              </BlurView>
-            </>
+              <View pointerEvents="none" style={styles.tabBarInnerGlow} />
+            </BlurView>
           ),
           tabBarStyle: {
             display: workoutExpanded ? 'none' : 'flex',
@@ -133,17 +116,23 @@ const styles = StyleSheet.create({
   tabsRoot: {
     flex: 1,
   },
-  tabBarVeil: {
-    position: 'absolute',
-    top: 0,
-  },
   tabBarGlass: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17,20,24,0.38)',
-    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(16,22,29,0.34)',
+    borderColor: 'rgba(255,255,255,0.2)',
     borderRadius: 18,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  tabBarInnerGlow: {
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    bottom: 3,
+    left: 3,
+    position: 'absolute',
+    right: 3,
+    top: 3,
   },
 });
 
@@ -183,6 +172,7 @@ export function RootNavigator() {
             <Stack.Screen name="LiveWorkout" component={LiveWorkoutScreen} options={{ title: 'Live Workout' }} />
             <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} options={{ title: 'Workout Summary' }} />
             <Stack.Screen name="ExerciseHistory" component={ExerciseHistoryScreen} options={{ title: 'Exercise History' }} />
+            <Stack.Screen name="TemplateBuilder" component={TemplateBuilderScreen} options={{ headerShown: false }} />
             <Stack.Screen name="EditProgram" component={EditProgramScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FoodSearch" component={FoodSearchScreen} options={{ title: 'Add Food' }} />
             <Stack.Screen name="FoodEntryDetails" component={FoodEntryDetailsScreen} options={{ title: 'Food Details' }} />

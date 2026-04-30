@@ -210,6 +210,29 @@ export interface UpsertProgramDayOutcomeInput {
   status: ProgramDayOutcomeStatus;
 }
 
+export interface RoutineTemplateSetInput {
+  setType?: SetType;
+  targetReps?: number | null;
+  targetWeightKg?: number | null;
+  durationSeconds?: number | null;
+  distanceMeters?: number | null;
+}
+
+export interface RoutineTemplateExerciseInput {
+  exerciseId: string;
+  supersetGroup?: string | null;
+  notes?: string | null;
+  defaultRestSeconds?: number;
+  sets: RoutineTemplateSetInput[];
+}
+
+export interface SaveRoutineTemplateInput {
+  routineId?: string;
+  name: string;
+  notes?: string | null;
+  exercises: RoutineTemplateExerciseInput[];
+}
+
 const PROGRAM_ACTIVITY_DETAILS: Record<Exclude<ProgramActivityType, 'strength'>, { title: string; subtitle: string; estimatedDurationMinutes: number }> = {
   cardio: { title: 'Cardio', subtitle: 'Moderate · ~35 min', estimatedDurationMinutes: 35 },
   padel: { title: 'Padel', subtitle: 'Match / Training', estimatedDurationMinutes: 60 },
@@ -240,6 +263,170 @@ export async function listRoutines(userId = DEMO_USER_ID): Promise<Routine[]> {
     routines.push(await hydrateRoutine(row));
   }
   return routines;
+}
+
+export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userId = DEMO_USER_ID): Promise<string> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error('Template name is required.');
+  }
+  if (!input.exercises.length) {
+    throw new Error('Add at least one exercise before saving.');
+  }
+
+  const existingRoutine = input.routineId
+    ? await db.getFirstAsync<RoutineRow>('SELECT * FROM routines WHERE id = ? AND user_id = ? LIMIT 1', [input.routineId, userId])
+    : null;
+
+  let routineId: string;
+  if (existingRoutine) {
+    routineId = existingRoutine.id;
+    await db.runAsync(
+      `UPDATE routines
+       SET name = ?, notes = ?, updated_at = ?, deleted_at = NULL, sync_status = 'pending', version = version + 1
+       WHERE id = ?`,
+      [name, input.notes?.trim() || null, now, routineId],
+    );
+  } else {
+    const nextSortOrder = await db.getFirstAsync<{ next_order: number }>(
+      'SELECT COALESCE(MAX(sort_order), 0) + 1 as next_order FROM routines WHERE user_id = ? AND deleted_at IS NULL',
+      [userId],
+    );
+    routineId = input.routineId ?? createId('routine');
+    await db.runAsync(
+      `INSERT INTO routines
+      (id, user_id, name, notes, sort_order, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [routineId, userId, name, input.notes?.trim() || null, nextSortOrder?.next_order ?? 1, now, now, null, 'pending', 1],
+    );
+  }
+
+  const existingRoutineExercises = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM routine_exercises WHERE routine_id = ? AND deleted_at IS NULL',
+    [routineId],
+  );
+
+  for (const row of existingRoutineExercises) {
+    await db.runAsync(
+      `UPDATE routine_exercise_set_templates
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
+      [now, now, row.id],
+    );
+  }
+
+  await db.runAsync(
+    `UPDATE routine_exercises
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE routine_id = ? AND deleted_at IS NULL`,
+    [now, now, routineId],
+  );
+
+  for (const [exerciseIndex, exerciseInput] of input.exercises.entries()) {
+    const routineExerciseId = createId('routine_exercise');
+    await db.runAsync(
+      `INSERT INTO routine_exercises
+      (id, routine_id, exercise_id, sort_order, superset_group, notes, default_rest_seconds, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        routineExerciseId,
+        routineId,
+        exerciseInput.exerciseId,
+        exerciseIndex + 1,
+        exerciseInput.supersetGroup ?? null,
+        exerciseInput.notes?.trim() || null,
+        Math.max(0, Math.round(exerciseInput.defaultRestSeconds ?? 120)),
+        now,
+        now,
+        null,
+        'pending',
+        1,
+      ],
+    );
+
+    const sets = exerciseInput.sets.length ? exerciseInput.sets : [{ setType: 'normal' as const }];
+    for (const [setIndex, setInput] of sets.entries()) {
+      const targetReps = setInput.targetReps != null && Number.isFinite(setInput.targetReps) ? Math.max(0, Math.round(setInput.targetReps)) : null;
+      const targetWeightKg =
+        setInput.targetWeightKg != null && Number.isFinite(setInput.targetWeightKg)
+          ? Math.max(0, Math.round(setInput.targetWeightKg * 10) / 10)
+          : null;
+
+      await db.runAsync(
+        `INSERT INTO routine_exercise_set_templates
+        (id, routine_exercise_id, sort_order, set_type, target_reps_min, target_reps_max, target_weight_kg, duration_seconds, distance_meters, created_at, updated_at, deleted_at, sync_status, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          createId('routine_set_template'),
+          routineExerciseId,
+          setIndex + 1,
+          setInput.setType ?? 'normal',
+          targetReps,
+          targetReps,
+          targetWeightKg,
+          setInput.durationSeconds != null && Number.isFinite(setInput.durationSeconds) ? Math.max(0, Math.round(setInput.durationSeconds)) : null,
+          setInput.distanceMeters != null && Number.isFinite(setInput.distanceMeters)
+            ? Math.max(0, Math.round(setInput.distanceMeters * 100) / 100)
+            : null,
+          now,
+          now,
+          null,
+          'pending',
+          1,
+        ],
+      );
+    }
+  }
+
+  return routineId;
+}
+
+export async function deleteRoutineTemplate(routineId: string, userId = DEMO_USER_ID): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const routine = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM routines WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1',
+    [routineId, userId],
+  );
+  if (!routine?.id) {
+    return;
+  }
+
+  const routineExerciseRows = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM routine_exercises WHERE routine_id = ? AND deleted_at IS NULL',
+    [routineId],
+  );
+  for (const row of routineExerciseRows) {
+    await db.runAsync(
+      `UPDATE routine_exercise_set_templates
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
+      [now, now, row.id],
+    );
+  }
+
+  await db.runAsync(
+    `UPDATE routine_exercises
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE routine_id = ? AND deleted_at IS NULL`,
+    [now, now, routineId],
+  );
+
+  await db.runAsync(
+    `UPDATE routines
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND deleted_at IS NULL`,
+    [now, now, routineId],
+  );
+
+  await db.runAsync(
+    `UPDATE workout_program_days
+     SET routine_id = NULL, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE user_id = ? AND routine_id = ? AND deleted_at IS NULL`,
+    [now, userId, routineId],
+  );
 }
 
 export async function getActiveWorkout(userId = DEMO_USER_ID): Promise<WorkoutSession | null> {

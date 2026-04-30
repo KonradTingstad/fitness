@@ -24,6 +24,29 @@ const MAX_HTTP_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
 const ENERGY_BRANDS_WITH_32_MG_PER_100_ML = new Set(['monster', 'red bull', 'red-bull', 'battery']);
+const DRINK_KEYWORDS = [
+  'vann',
+  'water',
+  'brus',
+  'soda',
+  'cola',
+  'juice',
+  'smoothie',
+  'sportsdrikk',
+  'energidrikk',
+  'energy drink',
+  'drikk',
+  'drink',
+  'kaffe',
+  'coffee',
+  'te',
+  'saft',
+  'milkshake',
+  'kombucha',
+  'lemonade',
+  'isoton',
+  'iste',
+];
 
 const STOP_THRESHOLDS = {
   status429: 15,
@@ -492,6 +515,25 @@ function normalizeLabel(label) {
     .trim();
 }
 
+function toTokenSet(normalizedText) {
+  if (!normalizedText) return new Set();
+  return new Set(
+    normalizedText
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean),
+  );
+}
+
+function hasKeywordMatch(normalizedHaystack, tokenSet, keyword) {
+  const normalizedKeyword = normalizeLabel(keyword);
+  if (!normalizedKeyword) return false;
+  if (normalizedKeyword.includes(' ')) {
+    return normalizedHaystack.includes(` ${normalizedKeyword} `);
+  }
+  return tokenSet.has(normalizedKeyword);
+}
+
 function parseDecimalNumber(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -811,6 +853,30 @@ function chooseServingUnit(nutritionTitle) {
   return 'g';
 }
 
+function inferItemType(product, localDetails, contentInfo) {
+  const parts = [
+    product?.name,
+    product?.full_name,
+    product?.name_extra,
+    product?.brand,
+    localDetails?.nutrition_info_table?.title,
+    contentInfo?.packageSize,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeLabel(value))
+    .filter(Boolean);
+
+  const combined = ` ${parts.join(' ').trim()} `.replace(/\s+/g, ' ');
+  if (!combined.trim()) return 'food';
+  const tokenSet = toTokenSet(combined);
+
+  if (DRINK_KEYWORDS.some((keyword) => hasKeywordMatch(combined, tokenSet, keyword))) {
+    return 'drink';
+  }
+
+  return 'food';
+}
+
 function hasUsefulNutrition(normalizedProduct) {
   const values = [
     normalizedProduct.calories_per_100,
@@ -902,6 +968,7 @@ function normalizeOdaProduct(product) {
   const nutrition = normalizeNutritionRows(nutritionRows);
   const contentInfo = extractContentValues(localDetails?.contents_table?.rows ?? []);
   const caffeineMgPerCan = extractCaffeineMgPerCan(product, contentInfo, localDetails);
+  const itemType = inferItemType(product, localDetails, contentInfo);
 
   const name = String(product?.full_name ?? product?.name ?? '').trim();
   if (!name) {
@@ -917,6 +984,7 @@ function normalizeOdaProduct(product) {
     user_id: null,
     brand_id: null,
     name,
+    item_type: itemType,
     brand: product?.brand ? String(product.brand).trim() : null,
     variant: parseVariant(product?.name_extra),
     package_size: contentInfo.packageSize,
@@ -985,6 +1053,7 @@ function normalizedToUpsertRow(normalized) {
     user_id: null,
     brand_id: null,
     brand_name: normalized.brand,
+    item_type: normalized.item_type ?? 'food',
     name: normalized.name,
     serving_size: 100,
     serving_unit: 'g',
@@ -1145,6 +1214,7 @@ async function resolveFoodItemsWriteContext(client) {
     'user_id',
     'brand_id',
     'brand_name',
+    'item_type',
     'name',
     'serving_size',
     'serving_unit',

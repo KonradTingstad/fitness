@@ -6,6 +6,7 @@ import { Alert, StyleSheet, TextInput, View } from 'react-native';
 
 import { AppText } from '@/components/AppText';
 import { addDiaryEntry, createCustomFood } from '@/data/repositories/nutritionRepository';
+import { FoodItemType } from '@/domain/models';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
 import { customFoodSchema } from '@/domain/validation/forms';
 import { queryKeys } from '@/hooks/queryKeys';
@@ -19,6 +20,8 @@ export function CustomFoodScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
+  const mode: FoodItemType = route.params.mode ?? 'food';
+  const modeLabel = mode === 'drink' ? 'drink' : 'food';
   const [form, setForm] = useState({
     name: '',
     brandName: '',
@@ -39,7 +42,7 @@ export function CustomFoodScreen() {
       if (!parsed.success) {
         throw new Error(parsed.error.issues[0]?.message ?? 'Invalid custom food');
       }
-      const foodId = await createCustomFood(parsed.data);
+      const foodId = await createCustomFood(parsed.data, undefined, mode);
       await addDiaryEntry({
         localDate: route.params.localDate,
         mealSlot: route.params.mealSlot,
@@ -50,18 +53,20 @@ export function CustomFoodScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(route.params.localDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.foodSearch('') });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey)
+          && (query.queryKey[0] === 'foodSearch' || query.queryKey[0] === 'recentFoods' || query.queryKey[0] === 'frequentlyLoggedFoods'),
+      });
       navigation.goBack();
     },
-    onError: (error) => Alert.alert('Custom food', error instanceof Error ? error.message : 'Unable to save food.'),
+    onError: (error) => Alert.alert(`Custom ${modeLabel}`, error instanceof Error ? error.message : `Unable to save ${modeLabel}.`),
   });
 
   return (
     <NutritionScreen>
       <NutritionCard>
-        <AppText variant="section">Food identity</AppText>
+        <AppText variant="section">{mode === 'drink' ? 'Drink identity' : 'Food identity'}</AppText>
         <Field label="Name" value={form.name} onChangeText={(name) => setForm((current) => ({ ...current, name }))} />
         <Field label="Brand" value={form.brandName} onChangeText={(brandName) => setForm((current) => ({ ...current, brandName }))} />
       </NutritionCard>
@@ -88,9 +93,9 @@ export function CustomFoodScreen() {
           <Field label="Sodium mg" value={form.sodiumMg} onChangeText={(sodiumMg) => setForm((current) => ({ ...current, sodiumMg }))} keyboardType="decimal-pad" />
         </View>
       </NutritionCard>
-      <NutritionButton label="Save and log" icon={Save} onPress={() => save.mutate()} />
+      <NutritionButton label={`Save and log ${modeLabel}`} icon={Save} onPress={() => save.mutate()} />
       <AppText muted variant="small" style={{ color: theme.colors.muted }}>
-        Custom foods are stored locally first and queued for sync when Supabase is configured.
+        Custom {modeLabel}s are stored locally first and queued for sync when Supabase is configured.
       </AppText>
     </NutritionScreen>
   );

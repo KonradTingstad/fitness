@@ -1,4 +1,4 @@
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, addMonths, addYears, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
@@ -22,7 +22,7 @@ import {
   Star,
   X,
 } from 'lucide-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -34,6 +34,7 @@ import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
 import {
+  deleteRoutineTemplate,
   ProgramActivityType,
   ProgramDayOutcomeStatus,
   ProgramScheduleDay,
@@ -593,6 +594,14 @@ export function WorkoutDashboardScreen() {
   const exercises = useExercises();
   const routineList = routines.data ?? EMPTY_ROUTINES;
 
+  useFocusEffect(
+    useCallback(() => {
+      const currentDayKey = localDateKey(new Date());
+      setSelectedDate((current) => (current === currentDayKey ? current : currentDayKey));
+      return undefined;
+    }, []),
+  );
+
   useEffect(() => {
     if (routines.isLoading) {
       return;
@@ -687,6 +696,25 @@ export function WorkoutDashboardScreen() {
       queryClient.invalidateQueries({
         predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'programDayOutcomes',
       });
+    },
+  });
+
+  const deleteTemplate = useMutation({
+    mutationFn: (routineId: string) => deleteRoutineTemplate(routineId),
+    onSuccess: (_result, routineId) => {
+      setWorkoutGroups((current) =>
+        current.map((group) => ({
+          ...group,
+          routineIds: group.routineIds.filter((id) => id !== routineId),
+        })),
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.routines });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && (query.queryKey[0] === 'workoutPlans' || query.queryKey[0] === 'programSchedule'),
+      });
+    },
+    onError: (error) => {
+      Alert.alert('Delete template', error instanceof Error ? error.message : 'Unable to delete template.');
     },
   });
 
@@ -907,10 +935,22 @@ export function WorkoutDashboardScreen() {
     );
   };
 
+  const confirmDeleteTemplate = (routine: Routine) => {
+    if (deleteTemplate.isPending) {
+      return;
+    }
+    Alert.alert('Delete template?', `"${routine.name}" will be permanently removed.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteTemplate.mutate(routine.id) },
+    ]);
+  };
+
   const showTemplateActions = (group: WorkoutGroup, routine: Routine) => {
     Alert.alert(routine.name, 'Template actions', [
+      { text: 'Edit template', onPress: () => navigation.navigate('TemplateBuilder', { routineId: routine.id, groupId: group.id, groupName: group.name }) },
       { text: 'Start workout', onPress: () => startRoutine.mutate(routine.id) },
       { text: 'Move to top', onPress: () => moveTemplateToTop(group, routine) },
+      { text: 'Delete template', style: 'destructive', onPress: () => confirmDeleteTemplate(routine) },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
@@ -918,7 +958,7 @@ export function WorkoutDashboardScreen() {
   const renderTemplateCard = (group: WorkoutGroup, routine: Routine) => (
     <Pressable
       key={routine.id}
-      onPress={() => startRoutine.mutate(routine.id)}
+      onPress={() => navigation.navigate('TemplateBuilder', { routineId: routine.id, groupId: group.id, groupName: group.name })}
       onLongPress={() => showTemplateActions(group, routine)}
       style={({ pressed }) => [
         styles.templateCard,
@@ -953,7 +993,7 @@ export function WorkoutDashboardScreen() {
   const renderAddTemplateCard = (group: WorkoutGroup) => (
     <Pressable
       key={`${group.id}-add-template`}
-      onPress={() => Alert.alert('Add template', `Template creation can be opened for ${group.name}.`)}
+      onPress={() => navigation.navigate('TemplateBuilder', { groupId: group.id, groupName: group.name })}
       style={({ pressed }) => [
         styles.addTemplateCard,
         { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, opacity: pressed ? 0.78 : 1 },
@@ -1026,6 +1066,8 @@ export function WorkoutDashboardScreen() {
     const activeToday = selectedSessions.find(
       (session) => session.status === 'active' && (selectedProgramDay.type === 'rest' || workoutMatchesProgramDay(session, selectedProgramDay)),
     );
+    const completedStrengthSession = selectedSessions.find((session) => session.status === 'completed');
+    const hasCompletedStrengthWorkout = Boolean(completedStrengthSession);
     const isRestToday = selectedProgramDay.type === 'rest';
     const isPlannedToday = selectedProgramDay.type === 'workout';
     const isStrengthToday = selectedProgramDay.activityType === 'strength';
@@ -1043,6 +1085,25 @@ export function WorkoutDashboardScreen() {
     const canManuallyTrackToday = isPlannedToday && !isStrengthToday;
     const todayNonStrengthStatus = canManuallyTrackToday ? nonStrengthOutcomesByDate.get(selectedDate) : undefined;
     const todayProgramIconColor = programActivityColor(selectedProgramDay.activityType, theme);
+    const strengthRoutine =
+      isStrengthToday && selectedProgramDay.routineId
+        ? routineList.find((routine) => routine.id === selectedProgramDay.routineId)
+        : undefined;
+    const strengthPreviewExercises = strengthRoutine?.exercises
+      .map((item) => item.exercise?.name?.trim())
+      .filter((name): name is string => Boolean(name)) ?? [];
+    const visibleStrengthPreview = strengthPreviewExercises.slice(0, 2);
+    const hiddenStrengthPreviewCount = Math.max(0, strengthPreviewExercises.length - visibleStrengthPreview.length);
+    const strengthSetCount = strengthRoutine
+      ? strengthRoutine.exercises.reduce((sum, exercise) => sum + exercise.setTemplates.length, 0)
+      : 0;
+    const strengthSummary = [`${workoutExerciseCount} exercises`, strengthSetCount > 0 ? `${strengthSetCount} sets` : null, `~${workoutDuration} min`]
+      .filter((item): item is string => Boolean(item))
+      .join(' • ');
+    const nextPlannedDay = isRestToday
+      ? Array.from({ length: 14 }, (_, index) => buildProgramDay(addDays(selectedDateObj, index + 1), thisWeekScheduleMap, routineList))
+        .find((day) => day.type === 'workout')
+      : undefined;
     const startButtonLabel = activeToday
       ? 'View workout'
       : isStrengthToday
@@ -1061,101 +1122,163 @@ export function WorkoutDashboardScreen() {
     return (
       <>
         <Card style={styles.featureCard}>
-          <View style={styles.spaceBetween}>
-            <AppText variant="section" style={{ color: theme.colors.primary }}>
-              {isRestToday ? "Today's workout" : topTitle}
-            </AppText>
-            <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={20} color={todayProgramIconColor} />
-          </View>
-          <View style={styles.suggestedRow}>
-            <View style={[styles.suggestedIcon, { borderColor: theme.colors.primary }]}>
-              <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={24} color={todayProgramIconColor} />
+          <View style={styles.featureContent}>
+            <View style={styles.spaceBetween}>
+              <AppText variant="section" style={{ color: theme.colors.primary }}>
+                {isRestToday ? "Today's workout" : topTitle}
+              </AppText>
+              <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={20} color={todayProgramIconColor} />
             </View>
-            <View>
-              <AppText weight="800" style={styles.suggestedTitle}>
-                {isRestToday ? 'Rest day' : workoutTitle}
-              </AppText>
-              <AppText muted>
-                {isRestToday
-                  ? (selectedDate === todayKey ? 'No workout planned today' : 'No workout planned for this day')
-                  : isStrengthToday
-                    ? `${workoutExerciseCount} exercises • ~${workoutDuration} min`
-                    : `~${workoutDuration} min planned`}
-              </AppText>
-            </View>
-          </View>
-          {canManuallyTrackToday ? (
-            <View style={styles.outcomeRow}>
-              <AppText muted variant="small">
-                Did you do this activity?
-              </AppText>
-              <View style={styles.outcomeActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={saveProgramDayOutcome.isPending}
-                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'completed' })}
-                  style={({ pressed }) => [
-                    styles.outcomeButton,
-                    {
-                      borderColor: todayNonStrengthStatus === 'completed' ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: todayNonStrengthStatus === 'completed' ? theme.colors.surfaceAlt : 'transparent',
-                      opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
-                    },
-                  ]}
-                >
-                  <Check size={14} color={theme.colors.primary} />
-                  <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
-                    Completed
-                  </AppText>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={saveProgramDayOutcome.isPending}
-                  onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'missed' })}
-                  style={({ pressed }) => [
-                    styles.outcomeButton,
-                    {
-                      borderColor: todayNonStrengthStatus === 'missed' ? theme.colors.danger : theme.colors.border,
-                      backgroundColor: todayNonStrengthStatus === 'missed' ? theme.colors.surfaceAlt : 'transparent',
-                      opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
-                    },
-                  ]}
-                >
-                  <X size={14} color={theme.colors.danger} />
-                  <AppText weight="700" variant="small" style={{ color: theme.colors.danger }}>
-                    Missed
-                  </AppText>
-                </Pressable>
+            <View style={styles.suggestedRow}>
+              <View style={[styles.suggestedIcon, { borderColor: theme.colors.primary }]}>
+                <ProgramActivityIcon activityType={selectedProgramDay.activityType} size={24} color={todayProgramIconColor} />
+              </View>
+              <View style={styles.featureMainText}>
+                <AppText weight="800" style={styles.suggestedTitle}>
+                  {isRestToday ? 'Rest day' : workoutTitle}
+                </AppText>
+                <AppText muted>
+                  {isRestToday
+                    ? (selectedDate === todayKey ? 'No workout planned today' : 'No workout planned for this day')
+                    : isStrengthToday
+                      ? strengthSummary
+                      : `~${workoutDuration} min planned`}
+                </AppText>
               </View>
             </View>
-          ) : null}
-          {!isRestToday ? (
-            <Button
-              label={startButtonLabel}
-              icon={Play}
-              onPress={() => {
-                if (activeToday) {
-                  openLiveWorkout(activeToday.id);
-                  return;
-                }
-                if (isPlannedToday && !isStrengthToday) {
-                  startEmpty.mutate();
-                  return;
-                }
-                if (isPlannedToday && isStrengthToday) {
-                  if (selectedProgramDay.routineId) {
-                    startRoutine.mutate(selectedProgramDay.routineId);
-                    return;
-                  }
-                }
-                if (topRoutine) {
-                  startRoutine.mutate(topRoutine.id);
-                  return;
-                }
-                startEmpty.mutate();
-              }}
-            />
-          ) : null}
+            <View style={styles.featureDetailsArea}>
+              {isStrengthToday ? (
+                <View style={[styles.featureDetailsCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                  {visibleStrengthPreview.length ? (
+                    <View style={styles.featureChipsRow}>
+                      {visibleStrengthPreview.map((name, index) => (
+                        <View key={`${name}-${index}`} style={[styles.featureChip, { borderColor: theme.colors.border, backgroundColor: 'transparent' }]}>
+                          <AppText muted variant="small" numberOfLines={1}>
+                            {name}
+                          </AppText>
+                        </View>
+                      ))}
+                      {hiddenStrengthPreviewCount > 0 ? (
+                        <View style={[styles.featureChip, { borderColor: theme.colors.primary, backgroundColor: 'rgba(53,199,122,0.1)' }]}>
+                          <AppText variant="small" weight="700" style={{ color: theme.colors.primary }}>
+                            +{hiddenStrengthPreviewCount} more
+                          </AppText>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <AppText muted variant="small">
+                      Open plan to see exercises
+                    </AppText>
+                  )}
+                </View>
+              ) : isRestToday ? (
+                <View style={[styles.featureDetailsCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                  <AppText weight="700">No workout planned</AppText>
+                  {nextPlannedDay ? (
+                    <View style={styles.featureContextRow}>
+                      <AppText muted variant="small">
+                        Next planned
+                      </AppText>
+                      <AppText variant="small" weight="700" style={{ color: theme.colors.primary }}>
+                        {nextPlannedDay.day} • {nextPlannedDay.title}
+                      </AppText>
+                    </View>
+                  ) : null}
+                </View>
+              ) : canManuallyTrackToday ? (
+                <View style={styles.outcomeRow}>
+                  <AppText muted variant="small">
+                    Did you do this activity?
+                  </AppText>
+                  <View style={styles.outcomeActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={saveProgramDayOutcome.isPending}
+                      onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'completed' })}
+                      style={({ pressed }) => [
+                        styles.outcomeButton,
+                        {
+                          borderColor: todayNonStrengthStatus === 'completed' ? theme.colors.primary : theme.colors.border,
+                          backgroundColor: todayNonStrengthStatus === 'completed' ? theme.colors.surfaceAlt : 'transparent',
+                          opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
+                        },
+                      ]}
+                    >
+                      <Check size={14} color={theme.colors.primary} />
+                      <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
+                        Completed
+                      </AppText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={saveProgramDayOutcome.isPending}
+                      onPress={() => saveProgramDayOutcome.mutate({ localDate: selectedDate, status: 'missed' })}
+                      style={({ pressed }) => [
+                        styles.outcomeButton,
+                        {
+                          borderColor: todayNonStrengthStatus === 'missed' ? theme.colors.danger : theme.colors.border,
+                          backgroundColor: todayNonStrengthStatus === 'missed' ? theme.colors.surfaceAlt : 'transparent',
+                          opacity: saveProgramDayOutcome.isPending ? 0.65 : pressed ? 0.8 : 1,
+                        },
+                      ]}
+                    >
+                      <X size={14} color={theme.colors.danger} />
+                      <AppText weight="700" variant="small" style={{ color: theme.colors.danger }}>
+                        Missed
+                      </AppText>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={[styles.featureDetailsCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                  <AppText muted variant="small">
+                    Log this session as completed or missed to keep your streak accurate.
+                  </AppText>
+                </View>
+              )}
+            </View>
+            <View style={styles.featureFooter}>
+              {hasCompletedStrengthWorkout ? (
+                <View style={[styles.featureCompleteFooter, { borderColor: theme.colors.primary, backgroundColor: 'rgba(53,199,122,0.1)' }]}>
+                  <Check size={15} color={theme.colors.primary} />
+                  <AppText weight="800" style={{ color: theme.colors.primary }}>
+                    Workout complete
+                  </AppText>
+                </View>
+              ) : (
+                <Button
+                  label={startButtonLabel}
+                  icon={Play}
+                  onPress={() => {
+                    if (activeToday) {
+                      openLiveWorkout(activeToday.id);
+                      return;
+                    }
+                    if (isRestToday) {
+                      startEmpty.mutate();
+                      return;
+                    }
+                    if (isPlannedToday && !isStrengthToday) {
+                      startEmpty.mutate();
+                      return;
+                    }
+                    if (isPlannedToday && isStrengthToday) {
+                      if (selectedProgramDay.routineId) {
+                        startRoutine.mutate(selectedProgramDay.routineId);
+                        return;
+                      }
+                    }
+                    if (topRoutine) {
+                      startRoutine.mutate(topRoutine.id);
+                      return;
+                    }
+                    startEmpty.mutate();
+                  }}
+                />
+              )}
+            </View>
+          </View>
         </Card>
 
         <Card>
@@ -1169,34 +1292,56 @@ export function WorkoutDashboardScreen() {
           <View style={styles.weekRow}>
             {fullWeek.map(({ day, adherence }, index) => {
               const activityIconColor = programActivityColor(day.activityType, theme);
+              const isSelectedDay = day.localDate === selectedDate;
               const isCompleted = adherence.status === 'done';
               const isMissed = adherence.status === 'missed';
               const statusColor = isCompleted ? theme.colors.primary : isMissed ? theme.colors.danger : theme.colors.muted;
               return (
                 <View key={day.localDate} style={[styles.weekCell, index > 0 && { borderLeftColor: theme.colors.border, borderLeftWidth: StyleSheet.hairlineWidth }]}>
-                  <AppText variant="small" muted>
-                    {day.day.toUpperCase()}
-                  </AppText>
-                  <View style={[styles.weekActivityIconWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                    <ProgramActivityIcon activityType={day.activityType} size={18} color={activityIconColor} />
-                  </View>
-                  <View
-                    style={[
-                      styles.weekOutcomeBadge,
-                      {
-                        borderColor: statusColor,
-                        backgroundColor: isCompleted || isMissed ? theme.colors.surfaceAlt : 'transparent',
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setSelectedDate(day.localDate)}
+                    style={({ pressed }) => [
+                      styles.weekCellInner,
+                      isSelectedDay && {
+                        borderColor: 'rgba(58,207,127,0.52)',
+                        backgroundColor: 'rgba(58,207,127,0.12)',
                       },
+                      pressed && { opacity: 0.82 },
                     ]}
                   >
-                    {isCompleted ? (
-                      <Check size={11} color={statusColor} />
-                    ) : isMissed ? (
-                      <X size={11} color={statusColor} />
-                    ) : (
-                      <View style={[styles.weekOutcomePendingDot, { backgroundColor: statusColor }]} />
-                    )}
-                  </View>
+                    <AppText variant="small" weight={isSelectedDay ? '800' : '600'} style={{ color: isSelectedDay ? theme.colors.primary : theme.colors.muted }}>
+                      {day.day.toUpperCase()}
+                    </AppText>
+                    <View
+                      style={[
+                        styles.weekActivityIconWrap,
+                        {
+                          borderColor: isSelectedDay ? theme.colors.primary : theme.colors.border,
+                          backgroundColor: isSelectedDay ? 'rgba(58,207,127,0.14)' : theme.colors.surfaceAlt,
+                        },
+                      ]}
+                    >
+                      <ProgramActivityIcon activityType={day.activityType} size={18} color={activityIconColor} />
+                    </View>
+                    <View
+                      style={[
+                        styles.weekOutcomeBadge,
+                        {
+                          borderColor: statusColor,
+                          backgroundColor: isCompleted || isMissed ? theme.colors.surfaceAlt : 'transparent',
+                        },
+                      ]}
+                    >
+                      {isCompleted ? (
+                        <Check size={11} color={statusColor} />
+                      ) : isMissed ? (
+                        <X size={11} color={statusColor} />
+                      ) : (
+                        <View style={[styles.weekOutcomePendingDot, { backgroundColor: statusColor }]} />
+                      )}
+                    </View>
+                  </Pressable>
                 </View>
               );
             })}
@@ -1780,12 +1925,20 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   featureCard: {
+    minHeight: 222,
+  },
+  featureContent: {
+    flex: 1,
     gap: 10,
   },
   suggestedRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 10,
+  },
+  featureMainText: {
+    flex: 1,
+    gap: 2,
   },
   suggestedIcon: {
     alignItems: 'center',
@@ -1798,11 +1951,57 @@ const styles = StyleSheet.create({
   suggestedTitle: {
     fontSize: 16,
   },
-  outcomeRow: {
+  featureDetailsArea: {
+    height: 60,
+  },
+  featureDetailsCard: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  featureChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  featureChip: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: '48%',
+    minHeight: 24,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  featureContextRow: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 2,
+  },
+  featureFooter: {
+    gap: 8,
+    marginTop: 'auto',
+  },
+  featureCompleteFooter: {
+    alignItems: 'center',
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 14,
+  },
+  outcomeRow: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
   },
   outcomeActions: {
     flexDirection: 'row',
@@ -1827,11 +2026,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   weekCell: {
-    alignItems: 'center',
     flex: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  weekCellInner: {
+    alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
     gap: 7,
-    paddingHorizontal: 6,
-    paddingVertical: 7,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
   },
   weekActivityIconWrap: {
     alignItems: 'center',

@@ -76,7 +76,7 @@ export function WorkoutSummaryScreen() {
       <Button
         label="Log post-workout meal"
         icon={Utensils}
-        onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'snacks', localDate: toLocalDateKey() })}
+        onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'snacks', localDate: toLocalDateKey(), mode: 'food' })}
       />
     </Screen>
   );

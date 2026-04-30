@@ -59,6 +59,7 @@ export function FoodEntryDetailsScreen() {
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
   const { food, mealSlot, localDate } = route.params;
+  const itemLabel = food.itemType === 'drink' ? 'drikke' : 'matvare';
 
   const hasServingSize = Number.isFinite(food.servingSize) && food.servingSize > 0;
   const servingSize = positiveOrFallback(food.servingSize, 100);
@@ -129,8 +130,11 @@ export function FoodEntryDetailsScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(localDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(localDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods });
-      queryClient.invalidateQueries({ queryKey: queryKeys.frequentlyLoggedFoods });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey)
+          && (query.queryKey[0] === 'foodSearch' || query.queryKey[0] === 'recentFoods' || query.queryKey[0] === 'frequentlyLoggedFoods'),
+      });
 
       const routes = navigation.getState().routes;
       const previousName = routes[routes.length - 2]?.name;
@@ -141,7 +145,7 @@ export function FoodEntryDetailsScreen() {
       }
     },
     onError: (error) => {
-      Alert.alert('Add food', error instanceof Error ? error.message : 'Unable to add food.');
+      Alert.alert(`Legg til ${itemLabel}`, error instanceof Error ? error.message : `Kunne ikke legge til ${itemLabel}.`);
     },
   });
 
@@ -309,7 +313,7 @@ export function FoodEntryDetailsScreen() {
       </NutritionCard>
 
       <NutritionButton
-        label="Legg til matvare"
+        label={`Legg til ${itemLabel}`}
         icon={Plus}
         disabled={!totals || addFood.isPending}
         onPress={() => addFood.mutate()}

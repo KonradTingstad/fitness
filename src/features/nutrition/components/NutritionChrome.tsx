@@ -1,8 +1,8 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { ComponentType, PropsWithChildren, useCallback, useRef } from 'react';
+import { ComponentType, ElementRef, PropsWithChildren, useCallback, useRef } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LucideProps } from 'lucide-react-native';
-import { Pressable, ScrollView, ScrollViewProps, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Pressable, ScrollViewProps, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -72,7 +72,7 @@ function cardOuterStyle(style?: StyleProp<ViewStyle>): ViewStyle {
 
 export function NutritionScreen({ children, contentContainerStyle, scrollProps, resetScrollOnBlur = false }: NutritionScreenProps) {
   const theme = useAppTheme();
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
   const tabBarClearance = useFloatingTabBarClearance();
   const bottomPadding = useWorkoutOverlayPadding(28 + tabBarClearance);
   const scrollY = useSharedValue(0);

@@ -1,6 +1,6 @@
 import { NavigatorScreenParams } from '@react-navigation/native';
 
-import { FoodItem, MealSlot } from '@/domain/models';
+import { FoodItem, FoodItemType, MealSlot } from '@/domain/models';
 import { ProgressWidgetCategory, ProgressWidgetMetric } from '@/features/progress/widgets/types';
 
 export type BottomTabParamList = {
@@ -18,11 +18,12 @@ export type RootStackParamList = {
   LiveWorkout: { sessionId: string };
   WorkoutSummary: { sessionId: string };
   ExerciseHistory: { exerciseId: string };
+  TemplateBuilder: { groupId?: string; groupName?: string; routineId?: string } | undefined;
   EditProgram: { initialLocalDate?: string } | undefined;
-  FoodSearch: { mealSlot: MealSlot; localDate: string };
+  FoodSearch: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
   FoodEntryDetails: { mealSlot: MealSlot; localDate: string; food: FoodItem };
-  CustomFood: { mealSlot: MealSlot; localDate: string };
-  BarcodeScanner: { mealSlot: MealSlot; localDate: string };
+  CustomFood: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
+  BarcodeScanner: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
   ProgressStatSelection: { category?: ProgressWidgetCategory } | undefined;
   ProgressStatConfig: { metricId: ProgressWidgetMetric; widgetId?: string };
 };

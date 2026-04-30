@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { getBodyWeightTrend, getDashboardSummary } from '@/data/repositories/dashboardRepository';
 import {
+  FoodSearchItemType,
   getCalorieGoalStreak,
   getDiary,
   getFrequentlyLoggedFoods,
@@ -109,20 +110,20 @@ export function useCalorieStreak(localDate = toLocalDateKey()) {
   });
 }
 
-export function useFoodSearch(query: string) {
+export function useFoodSearch(query: string, itemType: FoodSearchItemType = 'food') {
   return useQuery({
-    queryKey: queryKeys.foodSearch(query),
-    queryFn: () => searchFoodItems(query),
+    queryKey: queryKeys.foodSearch(query, itemType),
+    queryFn: () => searchFoodItems(query, itemType),
     enabled: query.trim().length >= 0,
   });
 }
 
-export function useRecentFoods() {
-  return useQuery({ queryKey: queryKeys.recentFoods, queryFn: () => getRecentFoods() });
+export function useRecentFoods(itemType: FoodSearchItemType = 'food') {
+  return useQuery({ queryKey: queryKeys.recentFoods(itemType), queryFn: () => getRecentFoods(itemType) });
 }
 
-export function useFrequentlyLoggedFoods() {
-  return useQuery({ queryKey: queryKeys.frequentlyLoggedFoods, queryFn: () => getFrequentlyLoggedFoods() });
+export function useFrequentlyLoggedFoods(itemType: FoodSearchItemType = 'food') {
+  return useQuery({ queryKey: queryKeys.frequentlyLoggedFoods(itemType), queryFn: () => getFrequentlyLoggedFoods(itemType) });
 }
 
 export function useNutritionLibrary() {

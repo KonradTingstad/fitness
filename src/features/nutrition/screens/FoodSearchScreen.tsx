@@ -8,7 +8,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AppText } from '@/components/AppText';
 import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
-import { FoodItem, MealSlot } from '@/domain/models';
+import { FoodItem, FoodItemType, MealSlot } from '@/domain/models';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
@@ -25,10 +25,13 @@ export function FoodSearchScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Nav>();
   const [query, setQuery] = useState('');
+  const mode: FoodItemType = route.params.mode ?? 'food';
+  const modeLabel = mode === 'drink' ? 'drink' : 'food';
+  const modePluralLabel = mode === 'drink' ? 'drinks' : 'foods';
   const diary = useDiary(route.params.localDate);
-  const foods = useFoodSearch(query);
-  const recent = useRecentFoods();
-  const suggestions = useFrequentlyLoggedFoods();
+  const foods = useFoodSearch(query, mode);
+  const recent = useRecentFoods(mode);
+  const suggestions = useFrequentlyLoggedFoods(mode);
   const lastUsedMealSlot = useMemo(
     () => resolveLastUsedMealSlot(diary.data?.day.entries ?? [], route.params.mealSlot),
     [diary.data?.day.entries, route.params.mealSlot],
@@ -46,7 +49,7 @@ export function FoodSearchScreen() {
   const openDefaultFoodEntryDetails = (food: FoodItem) => openFoodEntryDetails(food, lastUsedMealSlot);
 
   const results = query.trim().length ? foods.data ?? [] : recent.data ?? [];
-  const title = query.trim().length ? 'Search results' : 'Recent foods';
+  const title = query.trim().length ? `Search ${modePluralLabel}` : `Recent ${modePluralLabel}`;
 
   return (
     <NutritionScreen>
@@ -56,14 +59,14 @@ export function FoodSearchScreen() {
           value={query}
           onChangeText={setQuery}
           autoFocus
-          placeholder="Search foods, brands, or barcode"
+          placeholder={`Search ${modePluralLabel}, brands, or barcode`}
           placeholderTextColor={theme.colors.muted}
           style={[styles.input, { color: theme.colors.text }]}
         />
       </View>
 
       <View style={styles.quick}>
-        <NutritionButton label="Custom food" icon={Plus} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} style={styles.quickButton} />
+        <NutritionButton label={`Custom ${modeLabel}`} icon={Plus} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} style={styles.quickButton} />
         <NutritionButton label="Barcode" icon={Barcode} variant="soft" onPress={() => navigation.navigate('BarcodeScanner', route.params)} style={styles.quickButton} />
       </View>
 
@@ -71,7 +74,7 @@ export function FoodSearchScreen() {
 
       <AppText variant="section">{title}</AppText>
       {foods.isLoading || recent.isLoading || diary.isLoading ? (
-        <LoadingState label="Searching foods" />
+        <LoadingState label={`Searching ${modePluralLabel}`} />
       ) : results.length ? (
         results.map((food) => (
           <FoodRow
@@ -83,9 +86,9 @@ export function FoodSearchScreen() {
       ) : (
         <EmptyState
           icon={Search}
-          title="No food found"
-          body="Try a broader search, add a custom food, or scan a barcode when a provider is configured."
-          actionLabel="Add custom food"
+          title={`No ${modeLabel} found`}
+          body={`Try a broader search, add a custom ${modeLabel}, or scan a barcode when a provider is configured.`}
+          actionLabel={`Add custom ${modeLabel}`}
           onAction={() => navigation.navigate('CustomFood', route.params)}
         />
       )}

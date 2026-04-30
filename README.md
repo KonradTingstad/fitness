@@ -1,6 +1,6 @@
 # FormFuel (Fitness App)
 
-Sist oppdatert: 2026-04-29
+Sist oppdatert: 2026-04-30
 
 ## Viktig vedlikeholdsregel
 
@@ -52,6 +52,7 @@ Ved appstart (`App.tsx`) skjer dette:
 - Nutrition
 - Progress
 - Tab-baren er flytende (`position: absolute`), og skjerminnhold kompenserer automatisk med ekstra bunnklarering sa nederste element ikke havner bak menybaren.
+- Flytende tab-bar bruker na en ren liquid-glass stil (frosted blur + jevn tint), uten endring i hoyde/bredde.
 
 ### Stack-skjermer
 
@@ -84,6 +85,7 @@ Ved appstart (`App.tsx`) skjer dette:
   - kompakt toppstatus i kollapset state (`consumed / target kcal`)
   - makroindikatorer (protein/carbs/fat) plassert i scroll-innholdet under hero, slik at de scroller sammen med resten av modulene
   - "Today plan" (start workout / view workout / view summary)
+  - "Today plan" bytter til `Workout complete`-state nar brukeren har logget en fullfort treningsokt samme dag, og skjuler da `Start today's workout`-CTA
   - hydration med "Add 250 ml"
 - Quick actions:
   - Start empty workout
@@ -98,6 +100,10 @@ Ved appstart (`App.tsx`) skjer dette:
 - `History`: ukesoppsummering, kalender og fullforte okter med sammendrag
 - `Exercises`: sok/filter, PR/last set-data, inngang til historikk
 - Workouts-header og toppfaner bruker na samme dimensjoner/hoyde-oppsett som Nutrition for jevnere overgang mellom sidene.
+- Dato-navigasjonen i `Today` lar na brukeren trykke pa datolabelen for a apne en nedtrekks manedskalender med pilnavigasjon mellom maneder og tydelig markering av dagens dato.
+- Nar brukeren gar bort fra `Workouts`-fanen og tilbake, resettes datoen automatisk til dagens dato.
+- `Today > This week` highlighter na aktiv/valgt dag (fra datonavigatoren) med tydeligere bakgrunn, kant og labelfarge, og markeringen flytter seg nar valgt dato endres.
+- `Today's workout`-kortet holder na stabil hoyde pa tvers av dagstyper, og viser `Start empty workout` ogsa pa `Rest day` for mindre layout-hopp mellom datoer.
 
 Program-fanen:
 
@@ -166,6 +172,8 @@ Exercise history (`ExerciseHistoryScreen`):
 - `Search`: sok/filter/chips, quick-add, recent searches
 - `Meals`: strukturerte seksjoner for saved meals, favorites og recent meals med rikere kort, ingredient preview og macro-visualisering
 - `Goals`: target-kort og progresjon pa kalorier/macros/vann
+- Dato-navigasjonen i `Diary` bruker samme nedtrekks manedskalender som Workouts, med manedspiler og tydelig markert "i dag".
+- Nar brukeren gar bort fra `Nutrition`-fanen og tilbake, resettes datoen automatisk til dagens dato.
 
 Diary-fanen:
 
@@ -441,6 +449,14 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-04-30: Forenklet nederste tab-bar til ren liquid-glass uten stripete/veil-bakgrunn ved a fjerne ekstra gradient-lag og beholde blur + jevn tint + subtil inner glow.
+- 2026-04-29: Fjernet sirkelformede specular-highlight lag i nederste tab-bar for a rydde bort visuell stoy i bunnen, samtidig som liquid-glass stilen beholdes.
+- 2026-04-29: Oppgraderte nederste tab-bar til liquid-glass uttrykk (forbedret frosted blur, rim-lys og specular highlights) uten a endre eksisterende størrelse, bredde eller plassering.
+- 2026-04-29: Home `Today's plan` viser na `Workout complete` nar en hvilken som helst trening er logget som fullfort samme dag, og skjuler `Start today's workout`-knappen i denne staten.
+- 2026-04-29: Stabiliserte hoyden pa `Workouts > Today`-hovedkortet pa tvers av dagstyper (inkludert reservasjon av outcome-rad), og la til `Start empty workout`-valg ogsa pa rest-dager for jevnere UI ved datobytte.
+- 2026-04-29: Forbedret `Workouts > Today > This week` med tydelig highlight av valgt dag (koblet til datovalg i toppnavigasjonen), inkludert aktiv cellebakgrunn/kant, sterkere dagslabel og markert ikonring.
+- 2026-04-29: `Workouts` og `Nutrition` resetter na automatisk valgt dato til dagens dato nar man forlater fanen og kommer tilbake.
+- 2026-04-29: Utvidet felles `DateNavigator` (brukes i Workouts Today og Nutrition Diary) med trykkbar datolabel som apner nedtrekks manedskalender, pilnavigasjon mellom maneder, valgt dato-markering og tydelig highlight av dagens dato.
 - 2026-04-29: Matchet Workouts topp-layout mot Nutrition (samme header-knapp-hoyde/bredde og samme avrundede tab-shell med lik tab-hoyde) for en smooth overgang mellom `Workouts` og `Nutrition`.
 - 2026-04-29: La til joggeikon for `cardio` hentet fra nettet (Material Design Icons `run-fast`) og koblet det inn i felles aktivitetsikon-komponent. Kildesvg lagret i `assets/icons/mdi/run-fast.svg`.
 - 2026-04-29: La til komplett ikonoversikt for `lucide-react-native` i `docs/LUCIDE_ICON_LIST.md` (1699 ikon-komponenter) for enklere valg av UI-ikoner.

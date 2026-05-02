@@ -224,6 +224,7 @@ export interface DiaryEntry extends AuditFields {
   totalProteinG?: number;
   totalCarbsG?: number;
   totalFatG?: number;
+  sourceSavedMealId?: ID | null;
   loggedAt: string;
   foodNameSnapshot: string;
   caloriesSnapshot: number;
@@ -249,6 +250,12 @@ export interface SavedMealItem extends AuditFields {
   foodItemId: ID;
   servings: number;
   mealSlot?: MealSlot | null;
+  quantityType?: 'portion' | 'gram';
+  totalGrams?: number;
+  totalCalories?: number;
+  totalProteinG?: number;
+  totalCarbsG?: number;
+  totalFatG?: number;
 }
 
 export interface Recipe extends AuditFields {

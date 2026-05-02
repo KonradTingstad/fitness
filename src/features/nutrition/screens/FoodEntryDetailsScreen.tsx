@@ -20,6 +20,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 type QuantityMode = 'portion' | 'gram';
 
 const GRAM_PRESETS = [50, 100, 150, 250];
+const MEAL_SLOT_OPTIONS: MealSlot[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_SLOT_LABELS: Record<MealSlot, string> = {
   breakfast: 'Breakfast',
   lunch: 'Lunch',
@@ -69,6 +70,7 @@ export function FoodEntryDetailsScreen() {
   const [mode, setMode] = useState<QuantityMode>('portion');
   const [servingsText, setServingsText] = useState('1');
   const [gramsText, setGramsText] = useState(formatGram(gramsPerServing));
+  const [selectedMealSlot, setSelectedMealSlot] = useState<MealSlot>(mealSlot);
 
   const parsedServings = parsePositiveNumber(servingsText);
   const parsedGrams = parsePositiveNumber(gramsText);
@@ -112,7 +114,7 @@ export function FoodEntryDetailsScreen() {
 
       await addDiaryEntry({
         localDate,
-        mealSlot,
+        mealSlot: selectedMealSlot,
         foodItemId: food.id,
         food,
         servings: totals.servings,
@@ -189,7 +191,7 @@ export function FoodEntryDetailsScreen() {
               </AppText>
             ) : null}
             <AppText variant="small" muted>
-              {MEAL_SLOT_LABELS[mealSlot]} • {localDate}
+              {MEAL_SLOT_LABELS[selectedMealSlot]} • {localDate}
             </AppText>
           </View>
         </View>
@@ -204,6 +206,32 @@ export function FoodEntryDetailsScreen() {
         </View>
 
         <FoodMacroChips protein={totals?.protein ?? 0} carbs={totals?.carbs ?? 0} fat={totals?.fat ?? 0} />
+      </NutritionCard>
+
+      <NutritionCard>
+        <AppText variant="section">Log to meal</AppText>
+        <View style={styles.mealSlotRow}>
+          {MEAL_SLOT_OPTIONS.map((slot) => {
+            const active = slot === selectedMealSlot;
+            return (
+              <Pressable
+                key={slot}
+                onPress={() => setSelectedMealSlot(slot)}
+                style={({ pressed }) => [
+                  styles.mealSlotButton,
+                  {
+                    backgroundColor: active ? 'rgba(53,199,122,0.16)' : 'rgba(31,39,48,0.48)',
+                    opacity: pressed ? 0.84 : 1,
+                  },
+                ]}
+              >
+                <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.primary : theme.colors.muted }}>
+                  {MEAL_SLOT_LABELS[slot]}
+                </AppText>
+              </Pressable>
+            );
+          })}
+        </View>
       </NutritionCard>
 
       <NutritionCard>
@@ -371,6 +399,19 @@ const styles = StyleSheet.create({
   modeRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  mealSlotRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  mealSlotButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    minHeight: 38,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   modeButton: {
     alignItems: 'center',

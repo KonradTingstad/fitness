@@ -16,10 +16,10 @@ export function roundNutrition(value: number): number {
 
 export function sumDiaryEntries(entries: DiaryEntry[]): NutritionTotals {
   return entries.reduce<NutritionTotals>((totals, entry) => {
-    totals.calories += entry.caloriesSnapshot * entry.servings;
-    totals.proteinG += entry.proteinGSnapshot * entry.servings;
-    totals.carbsG += entry.carbsGSnapshot * entry.servings;
-    totals.fatG += entry.fatGSnapshot * entry.servings;
+    totals.calories += entry.totalCalories ?? entry.caloriesSnapshot * entry.servings;
+    totals.proteinG += entry.totalProteinG ?? entry.proteinGSnapshot * entry.servings;
+    totals.carbsG += entry.totalCarbsG ?? entry.carbsGSnapshot * entry.servings;
+    totals.fatG += entry.totalFatG ?? entry.fatGSnapshot * entry.servings;
     totals.fiberG += (entry.fiberGSnapshot ?? 0) * entry.servings;
     totals.sodiumMg += (entry.sodiumMgSnapshot ?? 0) * entry.servings;
     return totals;

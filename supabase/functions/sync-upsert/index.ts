@@ -331,6 +331,7 @@ Deno.serve(async (req) => {
             total_protein_g: (payload.totalProteinG as number | undefined) ?? null,
             total_carbs_g: (payload.totalCarbsG as number | undefined) ?? null,
             total_fat_g: (payload.totalFatG as number | undefined) ?? null,
+            source_saved_meal_id: (payload.sourceSavedMealId as string | undefined) ?? null,
             logged_at: nowIso,
             updated_at: nowIso,
           });
@@ -348,9 +349,63 @@ Deno.serve(async (req) => {
         if (hasValue(payload.totalProteinG)) patch.total_protein_g = payload.totalProteinG;
         if (hasValue(payload.totalCarbsG)) patch.total_carbs_g = payload.totalCarbsG;
         if (hasValue(payload.totalFatG)) patch.total_fat_g = payload.totalFatG;
+        if (hasValue(payload.sourceSavedMealId)) patch.source_saved_meal_id = payload.sourceSavedMealId;
 
         const { error } = await supabase.from('diary_entries').update(patch).eq('id', entityId);
         if (error) throw new Error(error.message);
+        break;
+      }
+
+      case 'saved_meal': {
+        if (operation === 'delete') {
+          await softDelete('saved_meals', entityId);
+          break;
+        }
+
+        if (operation === 'insert' || operation === 'upsert') {
+          await upsertById('saved_meals', {
+            id: entityId,
+            user_id: userId,
+            name: (payload.name as string | undefined) ?? 'Meal',
+            notes: (payload.notes as string | undefined) ?? null,
+            is_favorite: Boolean(payload.isFavorite),
+            updated_at: nowIso,
+          });
+          break;
+        }
+
+        const patch: Record<string, unknown> = { updated_at: nowIso };
+        if (hasValue(payload.name)) patch.name = payload.name;
+        if (hasValue(payload.notes)) patch.notes = payload.notes;
+        if (hasValue(payload.isFavorite)) patch.is_favorite = Boolean(payload.isFavorite);
+
+        const { error } = await supabase.from('saved_meals').update(patch).eq('id', entityId);
+        if (error) throw new Error(error.message);
+        break;
+      }
+
+      case 'saved_meal_item': {
+        if (operation === 'delete') {
+          await softDelete('saved_meal_items', entityId);
+          break;
+        }
+
+        const row: Record<string, unknown> = {
+          id: entityId,
+          saved_meal_id: payload.savedMealId,
+          food_item_id: payload.foodItemId,
+          servings: payload.servings,
+          meal_slot: (payload.mealSlot as string | undefined) ?? null,
+          quantity_type: (payload.quantityType as string | undefined) ?? null,
+          total_grams: (payload.totalGrams as number | undefined) ?? null,
+          total_calories: (payload.totalCalories as number | undefined) ?? null,
+          total_protein_g: (payload.totalProteinG as number | undefined) ?? null,
+          total_carbs_g: (payload.totalCarbsG as number | undefined) ?? null,
+          total_fat_g: (payload.totalFatG as number | undefined) ?? null,
+          updated_at: nowIso,
+        };
+
+        await upsertById('saved_meal_items', row);
         break;
       }
 

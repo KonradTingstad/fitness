@@ -22,6 +22,7 @@ export type RootStackParamList = {
   EditProgram: { initialLocalDate?: string } | undefined;
   FoodSearch: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
   FoodEntryDetails: { mealSlot: MealSlot; localDate: string; food: FoodItem };
+  CreateMeal: { localDate?: string; mealSlot?: MealSlot; savedMealId?: string } | undefined;
   CustomFood: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
   BarcodeScanner: { mealSlot: MealSlot; localDate: string; mode?: FoodItemType };
   ProgressStatSelection: { category?: ProgressWidgetCategory } | undefined;

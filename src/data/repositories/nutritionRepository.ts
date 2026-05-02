@@ -76,6 +76,7 @@ type DiaryEntryRow = {
   total_protein_g: number | null;
   total_carbs_g: number | null;
   total_fat_g: number | null;
+  source_saved_meal_id: string | null;
   logged_at: string;
   food_name_snapshot: string;
   calories_snapshot: number;
@@ -117,6 +118,19 @@ export interface FoodSuggestion {
 }
 
 export type FoodSearchItemType = FoodItemType | 'all';
+
+export type SavedMealItemInput = {
+  foodItemId: string;
+  servings: number;
+  mealSlot?: MealSlot | null;
+  food?: FoodItem;
+  quantityType?: 'portion' | 'gram';
+  totalGrams?: number;
+  totalCalories?: number;
+  totalProteinG?: number;
+  totalCarbsG?: number;
+  totalFatG?: number;
+};
 
 const CALORIE_STREAK_LOOKBACK_DAYS = 90;
 
@@ -323,6 +337,7 @@ export async function addDiaryEntry(input: {
   totalProteinG?: number;
   totalCarbsG?: number;
   totalFatG?: number;
+  sourceSavedMealId?: string | null;
   userId?: string;
 }): Promise<string> {
   const db = await getDatabase();
@@ -358,8 +373,8 @@ export async function addDiaryEntry(input: {
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO diary_entries
-    (id, user_id, diary_day_id, meal_slot, food_item_id, servings, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, logged_at, food_name_snapshot, calories_snapshot, protein_g_snapshot, carbs_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot, created_at, updated_at, deleted_at, sync_status, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, user_id, diary_day_id, meal_slot, food_item_id, servings, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, source_saved_meal_id, logged_at, food_name_snapshot, calories_snapshot, protein_g_snapshot, carbs_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       userId,
@@ -373,6 +388,7 @@ export async function addDiaryEntry(input: {
       totalProteinG,
       totalCarbsG,
       totalFatG,
+      input.sourceSavedMealId ?? null,
       now,
       food.name,
       food.calories,
@@ -399,6 +415,7 @@ export async function addDiaryEntry(input: {
     totalProteinG,
     totalCarbsG,
     totalFatG,
+    sourceSavedMealId: input.sourceSavedMealId ?? null,
   });
   return id;
 }
@@ -511,6 +528,12 @@ export async function getSavedMeals(userId = DEMO_USER_ID): Promise<SavedMeal[]>
       food_item_id: string;
       servings: number;
       meal_slot: MealSlot | null;
+      quantity_type: 'portion' | 'gram' | null;
+      total_grams: number | null;
+      total_calories: number | null;
+      total_protein_g: number | null;
+      total_carbs_g: number | null;
+      total_fat_g: number | null;
       created_at: string;
       updated_at: string;
       deleted_at: string | null;
@@ -529,6 +552,12 @@ export async function getSavedMeals(userId = DEMO_USER_ID): Promise<SavedMeal[]>
         foodItemId: item.food_item_id,
         servings: item.servings,
         mealSlot: item.meal_slot,
+        quantityType: item.quantity_type ?? undefined,
+        totalGrams: item.total_grams ?? undefined,
+        totalCalories: item.total_calories ?? undefined,
+        totalProteinG: item.total_protein_g ?? undefined,
+        totalCarbsG: item.total_carbs_g ?? undefined,
+        totalFatG: item.total_fat_g ?? undefined,
         createdAt: item.created_at,
         updatedAt: item.updated_at,
         deletedAt: item.deleted_at,
@@ -543,6 +572,260 @@ export async function getSavedMeals(userId = DEMO_USER_ID): Promise<SavedMeal[]>
     });
   }
   return meals;
+}
+
+export async function createSavedMeal(input: {
+  name: string;
+  items: SavedMealItemInput[];
+  notes?: string | null;
+  isFavorite?: boolean;
+  userId?: string;
+}): Promise<string> {
+  const name = input.name.trim();
+  if (!name.length) {
+    throw new Error('Meal name cannot be empty.');
+  }
+  if (!input.items.length) {
+    throw new Error('Add at least one food item.');
+  }
+
+  const db = await getDatabase();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const foodsToCache = input.items.map((item) => item.food).filter((food): food is FoodItem => Boolean(food));
+  await cacheFoodItemsInLocalDb(foodsToCache);
+  const foodRowsById = new Map<string, FoodRow>();
+
+  for (const item of input.items) {
+    if (!Number.isFinite(item.servings) || item.servings <= 0) {
+      throw new Error('Each meal item needs an amount greater than zero.');
+    }
+
+    const food = await db.getFirstAsync<FoodRow>('SELECT * FROM food_items WHERE id = ?', [item.foodItemId]);
+    if (!food) {
+      throw new Error('Food not found');
+    }
+    foodRowsById.set(item.foodItemId, food);
+  }
+
+  const savedMealId = createId('savedmeal');
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO saved_meals
+    (id, user_id, name, notes, is_favorite, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [savedMealId, userId, name, input.notes ?? null, input.isFavorite ? 1 : 0, now, now, null, 'pending', 1],
+  );
+  await enqueueSync('saved_meal', savedMealId, 'insert', {
+    userId,
+    name,
+    notes: input.notes ?? null,
+    isFavorite: Boolean(input.isFavorite),
+  });
+
+  for (const item of input.items) {
+    const food = foodRowsById.get(item.foodItemId) as FoodRow;
+
+    const gramsPerServing = Number.isFinite(food.grams_per_serving) && food.grams_per_serving > 0 ? food.grams_per_serving : 100;
+    const servings = item.servings;
+    const totalGrams = Number.isFinite(item.totalGrams) && (item.totalGrams as number) > 0 ? (item.totalGrams as number) : servings * gramsPerServing;
+    const totalCalories =
+      Number.isFinite(item.totalCalories) && (item.totalCalories as number) >= 0 ? (item.totalCalories as number) : food.calories * servings;
+    const totalProteinG =
+      Number.isFinite(item.totalProteinG) && (item.totalProteinG as number) >= 0
+        ? (item.totalProteinG as number)
+        : food.protein_g * servings;
+    const totalCarbsG =
+      Number.isFinite(item.totalCarbsG) && (item.totalCarbsG as number) >= 0 ? (item.totalCarbsG as number) : food.carbs_g * servings;
+    const totalFatG = Number.isFinite(item.totalFatG) && (item.totalFatG as number) >= 0 ? (item.totalFatG as number) : food.fat_g * servings;
+    const savedMealItemId = createId('savedmealitem');
+
+    await db.runAsync(
+      `INSERT INTO saved_meal_items
+      (id, saved_meal_id, food_item_id, servings, meal_slot, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        savedMealItemId,
+        savedMealId,
+        item.foodItemId,
+        servings,
+        item.mealSlot ?? null,
+        item.quantityType ?? 'portion',
+        totalGrams,
+        totalCalories,
+        totalProteinG,
+        totalCarbsG,
+        totalFatG,
+        now,
+        now,
+        null,
+        'pending',
+        1,
+      ],
+    );
+    await enqueueSync('saved_meal_item', savedMealItemId, 'insert', {
+      savedMealId,
+      foodItemId: item.foodItemId,
+      servings,
+      mealSlot: item.mealSlot ?? null,
+      quantityType: item.quantityType ?? 'portion',
+      totalGrams,
+      totalCalories,
+      totalProteinG,
+      totalCarbsG,
+      totalFatG,
+    });
+  }
+
+  return savedMealId;
+}
+
+export async function updateSavedMeal(input: {
+  savedMealId: string;
+  name: string;
+  items: SavedMealItemInput[];
+  notes?: string | null;
+  isFavorite?: boolean;
+  userId?: string;
+}): Promise<void> {
+  const name = input.name.trim();
+  if (!name.length) {
+    throw new Error('Meal name cannot be empty.');
+  }
+  if (!input.items.length) {
+    throw new Error('Add at least one food item.');
+  }
+
+  const db = await getDatabase();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const foodsToCache = input.items.map((item) => item.food).filter((food): food is FoodItem => Boolean(food));
+  await cacheFoodItemsInLocalDb(foodsToCache);
+  const foodRowsById = new Map<string, FoodRow>();
+
+  const existingMeal = await db.getFirstAsync<{ id: string; notes: string | null; is_favorite: number }>(
+    'SELECT id, notes, is_favorite FROM saved_meals WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+    [input.savedMealId, userId],
+  );
+  if (!existingMeal) {
+    throw new Error('Saved meal not found.');
+  }
+
+  for (const item of input.items) {
+    if (!Number.isFinite(item.servings) || item.servings <= 0) {
+      throw new Error('Each meal item needs an amount greater than zero.');
+    }
+
+    const food = await db.getFirstAsync<FoodRow>('SELECT * FROM food_items WHERE id = ?', [item.foodItemId]);
+    if (!food) {
+      throw new Error('Food not found');
+    }
+    foodRowsById.set(item.foodItemId, food);
+  }
+
+  const now = new Date().toISOString();
+  const resolvedNotes = input.notes ?? existingMeal.notes;
+  const resolvedFavorite = input.isFavorite ?? Boolean(existingMeal.is_favorite);
+
+  await db.runAsync(
+    `UPDATE saved_meals
+     SET name = ?, notes = ?, is_favorite = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    [name, resolvedNotes ?? null, resolvedFavorite ? 1 : 0, now, input.savedMealId, userId],
+  );
+  await enqueueSync('saved_meal', input.savedMealId, 'update', {
+    name,
+    notes: resolvedNotes ?? null,
+    isFavorite: resolvedFavorite,
+  });
+
+  const existingItems = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM saved_meal_items WHERE saved_meal_id = ? AND deleted_at IS NULL',
+    [input.savedMealId],
+  );
+  for (const existingItem of existingItems) {
+    await db.runAsync(
+      `UPDATE saved_meal_items
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE id = ?`,
+      [now, now, existingItem.id],
+    );
+    await enqueueSync('saved_meal_item', existingItem.id, 'delete', { id: existingItem.id });
+  }
+
+  for (const item of input.items) {
+    const food = foodRowsById.get(item.foodItemId) as FoodRow;
+    const gramsPerServing = Number.isFinite(food.grams_per_serving) && food.grams_per_serving > 0 ? food.grams_per_serving : 100;
+    const servings = item.servings;
+    const totalGrams = Number.isFinite(item.totalGrams) && (item.totalGrams as number) > 0 ? (item.totalGrams as number) : servings * gramsPerServing;
+    const totalCalories =
+      Number.isFinite(item.totalCalories) && (item.totalCalories as number) >= 0 ? (item.totalCalories as number) : food.calories * servings;
+    const totalProteinG =
+      Number.isFinite(item.totalProteinG) && (item.totalProteinG as number) >= 0
+        ? (item.totalProteinG as number)
+        : food.protein_g * servings;
+    const totalCarbsG =
+      Number.isFinite(item.totalCarbsG) && (item.totalCarbsG as number) >= 0 ? (item.totalCarbsG as number) : food.carbs_g * servings;
+    const totalFatG = Number.isFinite(item.totalFatG) && (item.totalFatG as number) >= 0 ? (item.totalFatG as number) : food.fat_g * servings;
+    const savedMealItemId = createId('savedmealitem');
+
+    await db.runAsync(
+      `INSERT INTO saved_meal_items
+      (id, saved_meal_id, food_item_id, servings, meal_slot, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        savedMealItemId,
+        input.savedMealId,
+        item.foodItemId,
+        servings,
+        item.mealSlot ?? null,
+        item.quantityType ?? 'portion',
+        totalGrams,
+        totalCalories,
+        totalProteinG,
+        totalCarbsG,
+        totalFatG,
+        now,
+        now,
+        null,
+        'pending',
+        1,
+      ],
+    );
+    await enqueueSync('saved_meal_item', savedMealItemId, 'insert', {
+      savedMealId: input.savedMealId,
+      foodItemId: item.foodItemId,
+      servings,
+      mealSlot: item.mealSlot ?? null,
+      quantityType: item.quantityType ?? 'portion',
+      totalGrams,
+      totalCalories,
+      totalProteinG,
+      totalCarbsG,
+      totalFatG,
+    });
+  }
+}
+
+export async function createSavedMealFromDiaryEntries(input: {
+  name: string;
+  entries: DiaryEntry[];
+  userId?: string;
+}): Promise<string> {
+  return createSavedMeal({
+    name: input.name,
+    userId: input.userId,
+    items: input.entries.map((entry) => ({
+      foodItemId: entry.foodItemId,
+      servings: entry.servings,
+      mealSlot: entry.mealSlot,
+      quantityType: entry.quantityType ?? 'portion',
+      totalGrams: entry.totalGrams,
+      totalCalories: entry.totalCalories ?? entry.caloriesSnapshot * entry.servings,
+      totalProteinG: entry.totalProteinG ?? entry.proteinGSnapshot * entry.servings,
+      totalCarbsG: entry.totalCarbsG ?? entry.carbsGSnapshot * entry.servings,
+      totalFatG: entry.totalFatG ?? entry.fatGSnapshot * entry.servings,
+    })),
+  });
 }
 
 export async function renameSavedMeal(savedMealId: string, name: string, userId = DEMO_USER_ID): Promise<void> {
@@ -579,7 +862,18 @@ export async function duplicateSavedMeal(savedMealId: string, userId = DEMO_USER
       food_item_id: string;
       servings: number;
       meal_slot: MealSlot | null;
-    }>('SELECT food_item_id, servings, meal_slot FROM saved_meal_items WHERE saved_meal_id = ? AND deleted_at IS NULL', [savedMealId]),
+      quantity_type: 'portion' | 'gram' | null;
+      total_grams: number | null;
+      total_calories: number | null;
+      total_protein_g: number | null;
+      total_carbs_g: number | null;
+      total_fat_g: number | null;
+    }>(
+      `SELECT food_item_id, servings, meal_slot, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g
+       FROM saved_meal_items
+       WHERE saved_meal_id = ? AND deleted_at IS NULL`,
+      [savedMealId],
+    ),
     db.getAllAsync<{ name: string }>('SELECT name FROM saved_meals WHERE user_id = ? AND deleted_at IS NULL', [userId]),
   ]);
 
@@ -608,14 +902,20 @@ export async function duplicateSavedMeal(savedMealId: string, userId = DEMO_USER
     const duplicatedItemId = createId('savedmealitem');
     await db.runAsync(
       `INSERT INTO saved_meal_items
-      (id, saved_meal_id, food_item_id, servings, meal_slot, created_at, updated_at, deleted_at, sync_status, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, saved_meal_id, food_item_id, servings, meal_slot, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         duplicatedItemId,
         duplicatedMealId,
         sourceItem.food_item_id,
         sourceItem.servings,
         sourceItem.meal_slot,
+        sourceItem.quantity_type,
+        sourceItem.total_grams,
+        sourceItem.total_calories,
+        sourceItem.total_protein_g,
+        sourceItem.total_carbs_g,
+        sourceItem.total_fat_g,
         now,
         now,
         null,
@@ -628,6 +928,12 @@ export async function duplicateSavedMeal(savedMealId: string, userId = DEMO_USER
       foodItemId: sourceItem.food_item_id,
       servings: sourceItem.servings,
       mealSlot: sourceItem.meal_slot,
+      quantityType: sourceItem.quantity_type,
+      totalGrams: sourceItem.total_grams,
+      totalCalories: sourceItem.total_calories,
+      totalProteinG: sourceItem.total_protein_g,
+      totalCarbsG: sourceItem.total_carbs_g,
+      totalFatG: sourceItem.total_fat_g,
     });
   }
 
@@ -699,12 +1005,36 @@ function buildDuplicateSavedMealName(sourceName: string, existingNames: Set<stri
 
 export async function logSavedMeal(savedMealId: string, mealSlot: MealSlot, localDate: string, userId = DEMO_USER_ID): Promise<void> {
   const db = await getDatabase();
-  const items = await db.getAllAsync<{ food_item_id: string; servings: number }>(
-    'SELECT food_item_id, servings FROM saved_meal_items WHERE saved_meal_id = ? AND deleted_at IS NULL',
+  const items = await db.getAllAsync<{
+    food_item_id: string;
+    servings: number;
+    quantity_type: 'portion' | 'gram' | null;
+    total_grams: number | null;
+    total_calories: number | null;
+    total_protein_g: number | null;
+    total_carbs_g: number | null;
+    total_fat_g: number | null;
+  }>(
+    `SELECT food_item_id, servings, quantity_type, total_grams, total_calories, total_protein_g, total_carbs_g, total_fat_g
+     FROM saved_meal_items
+     WHERE saved_meal_id = ? AND deleted_at IS NULL`,
     [savedMealId],
   );
   for (const item of items) {
-    await addDiaryEntry({ localDate, mealSlot, foodItemId: item.food_item_id, servings: item.servings, userId });
+    await addDiaryEntry({
+      localDate,
+      mealSlot,
+      foodItemId: item.food_item_id,
+      servings: item.servings,
+      quantityType: item.quantity_type ?? undefined,
+      totalGrams: item.total_grams ?? undefined,
+      totalCalories: item.total_calories ?? undefined,
+      totalProteinG: item.total_protein_g ?? undefined,
+      totalCarbsG: item.total_carbs_g ?? undefined,
+      totalFatG: item.total_fat_g ?? undefined,
+      sourceSavedMealId: savedMealId,
+      userId,
+    });
   }
 }
 
@@ -984,6 +1314,7 @@ function mapDiaryEntry(row: DiaryEntryRow): DiaryEntry {
     totalProteinG: row.total_protein_g ?? undefined,
     totalCarbsG: row.total_carbs_g ?? undefined,
     totalFatG: row.total_fat_g ?? undefined,
+    sourceSavedMealId: row.source_saved_meal_id,
     loggedAt: row.logged_at,
     foodNameSnapshot: row.food_name_snapshot,
     caloriesSnapshot: row.calories_snapshot,

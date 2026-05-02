@@ -11,6 +11,7 @@ import { AuthScreen } from '@/features/auth/screens/AuthScreen';
 import { OnboardingScreen } from '@/features/auth/screens/OnboardingScreen';
 import { HomeScreen } from '@/features/home/screens/HomeScreen';
 import { BarcodeScannerScreen } from '@/features/nutrition/screens/BarcodeScannerScreen';
+import { CreateMealScreen } from '@/features/nutrition/screens/CreateMealScreen';
 import { CustomFoodScreen } from '@/features/nutrition/screens/CustomFoodScreen';
 import { FoodEntryDetailsScreen } from '@/features/nutrition/screens/FoodEntryDetailsScreen';
 import { FoodSearchScreen } from '@/features/nutrition/screens/FoodSearchScreen';
@@ -176,6 +177,11 @@ export function RootNavigator() {
             <Stack.Screen name="EditProgram" component={EditProgramScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FoodSearch" component={FoodSearchScreen} options={{ title: 'Add Food' }} />
             <Stack.Screen name="FoodEntryDetails" component={FoodEntryDetailsScreen} options={{ title: 'Food Details' }} />
+            <Stack.Screen
+              name="CreateMeal"
+              component={CreateMealScreen}
+              options={{ headerShown: false }}
+            />
             <Stack.Screen name="CustomFood" component={CustomFoodScreen} options={{ title: 'Custom Food' }} />
             <Stack.Screen name="BarcodeScanner" component={BarcodeScannerScreen} options={{ title: 'Scan Barcode' }} />
             <Stack.Screen name="ProfileSettings" component={ProfileScreen} options={{ title: 'Profile & Settings' }} />

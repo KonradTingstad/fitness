@@ -49,6 +49,25 @@ describe('nutrition calculations', () => {
     expect(totals.sodiumMg).toBe(190);
   });
 
+  it('prefers stored entry totals when portion details are present', () => {
+    const gramEntry: DiaryEntry = {
+      ...baseEntry,
+      id: 'entry-grams',
+      mealSlot: 'lunch',
+      servings: 0.73,
+      totalCalories: 112,
+      totalProteinG: 17.5,
+      totalCarbsG: 6.4,
+      totalFatG: 2.1,
+    };
+
+    const totals = sumDiaryEntries([gramEntry]);
+    expect(totals.calories).toBe(112);
+    expect(totals.proteinG).toBe(17.5);
+    expect(totals.carbsG).toBe(6.4);
+    expect(totals.fatG).toBe(2.1);
+  });
+
   it('calculates remaining targets', () => {
     const remaining = remainingMacros(sumDiaryEntries([baseEntry]), goals);
     expect(remaining.calories).toBe(2200);

@@ -18,6 +18,16 @@ const diaryEntryColumns: ReadonlyArray<{ name: string; definition: string }> = [
   { name: 'total_protein_g', definition: 'REAL' },
   { name: 'total_carbs_g', definition: 'REAL' },
   { name: 'total_fat_g', definition: 'REAL' },
+  { name: 'source_saved_meal_id', definition: 'TEXT' },
+];
+
+const savedMealItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'quantity_type', definition: 'TEXT' },
+  { name: 'total_grams', definition: 'REAL' },
+  { name: 'total_calories', definition: 'REAL' },
+  { name: 'total_protein_g', definition: 'REAL' },
+  { name: 'total_carbs_g', definition: 'REAL' },
+  { name: 'total_fat_g', definition: 'REAL' },
 ];
 
 const foodItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
@@ -41,6 +51,19 @@ async function ensureDiaryEntryColumns(db: SQLite.SQLiteDatabase): Promise<void>
     }
 
     await db.execAsync(`ALTER TABLE diary_entries ADD COLUMN ${column.name} ${column.definition};`);
+  }
+}
+
+async function ensureSavedMealItemColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(saved_meal_items);');
+  const existingColumns = new Set(columns.map((column) => column.name));
+
+  for (const column of savedMealItemColumns) {
+    if (existingColumns.has(column.name)) {
+      continue;
+    }
+
+    await db.execAsync(`ALTER TABLE saved_meal_items ADD COLUMN ${column.name} ${column.definition};`);
   }
 }
 
@@ -70,6 +93,7 @@ export async function initializeDatabase(): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(MIGRATION_SQL);
   await ensureDiaryEntryColumns(db);
+  await ensureSavedMealItemColumns(db);
   await ensureFoodItemColumns(db);
   const version = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [
     'schema_version',
@@ -461,6 +485,12 @@ CREATE TABLE IF NOT EXISTS saved_meal_items (
   food_item_id TEXT NOT NULL,
   servings REAL NOT NULL,
   meal_slot TEXT,
+  quantity_type TEXT,
+  total_grams REAL,
+  total_calories REAL,
+  total_protein_g REAL,
+  total_carbs_g REAL,
+  total_fat_g REAL,
   ${auditColumns},
   FOREIGN KEY(saved_meal_id) REFERENCES saved_meals(id),
   FOREIGN KEY(food_item_id) REFERENCES food_items(id)

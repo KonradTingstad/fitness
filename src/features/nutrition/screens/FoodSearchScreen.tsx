@@ -1,7 +1,7 @@
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Barcode, Plus, Search } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -12,13 +12,19 @@ import { FoodItem, FoodItemType, MealSlot } from '@/domain/models';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
 import { FoodSuggestionStrip } from '@/features/nutrition/components/FoodSuggestionStrip';
 import { NutritionButton, NutritionCard, NutritionScreen } from '@/features/nutrition/components/NutritionChrome';
-import { resolveLastUsedMealSlot } from '@/features/nutrition/utils/foodLogInteractions';
-import { useDiary, useFoodSearch, useFrequentlyLoggedFoods, useRecentFoods } from '@/hooks/useAppQueries';
+import { useFoodSearch, useFrequentlyLoggedFoods, useRecentFoods } from '@/hooks/useAppQueries';
 import { RootStackParamList } from '@/navigation/types';
 import { useAppTheme } from '@/theme/theme';
 
 type Route = RouteProp<RootStackParamList, 'FoodSearch'>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+const MEAL_SLOT_LABELS: Record<MealSlot, string> = {
+  breakfast: 'Breakfast',
+  lunch: 'Lunch',
+  dinner: 'Dinner',
+  snacks: 'Snacks',
+};
 
 export function FoodSearchScreen() {
   const theme = useAppTheme();
@@ -28,31 +34,32 @@ export function FoodSearchScreen() {
   const mode: FoodItemType = route.params.mode ?? 'food';
   const modeLabel = mode === 'drink' ? 'drink' : 'food';
   const modePluralLabel = mode === 'drink' ? 'drinks' : 'foods';
-  const diary = useDiary(route.params.localDate);
   const foods = useFoodSearch(query, mode);
   const recent = useRecentFoods(mode);
   const suggestions = useFrequentlyLoggedFoods(mode);
-  const lastUsedMealSlot = useMemo(
-    () => resolveLastUsedMealSlot(diary.data?.day.entries ?? [], route.params.mealSlot),
-    [diary.data?.day.entries, route.params.mealSlot],
-  );
 
-  const openFoodEntryDetails = (food: FoodItem, mealSlot: MealSlot) => {
+  const openFoodEntryDetails = (food: FoodItem) => {
     void Haptics.selectionAsync();
     navigation.navigate('FoodEntryDetails', {
       food,
       localDate: route.params.localDate,
-      mealSlot,
+      mealSlot: route.params.mealSlot,
     });
   };
 
-  const openDefaultFoodEntryDetails = (food: FoodItem) => openFoodEntryDetails(food, lastUsedMealSlot);
-
   const results = query.trim().length ? foods.data ?? [] : recent.data ?? [];
   const title = query.trim().length ? `Search ${modePluralLabel}` : `Recent ${modePluralLabel}`;
+  const mealLabel = MEAL_SLOT_LABELS[route.params.mealSlot];
 
   return (
     <NutritionScreen>
+      <View style={[styles.targetMealRow, { backgroundColor: theme.colors.surfaceAlt }]}>
+        <AppText muted variant="small" weight="800">
+          Adding to
+        </AppText>
+        <AppText weight="800">{mealLabel}</AppText>
+      </View>
+
       <View style={[styles.searchBox, { backgroundColor: 'rgba(28,35,43,0.82)' }]}>
         <Search color={theme.colors.muted} size={20} />
         <TextInput
@@ -70,17 +77,17 @@ export function FoodSearchScreen() {
         <NutritionButton label="Barcode" icon={Barcode} variant="soft" onPress={() => navigation.navigate('BarcodeScanner', route.params)} style={styles.quickButton} />
       </View>
 
-      <FoodSuggestionStrip suggestions={suggestions.data ?? []} onSelect={openDefaultFoodEntryDetails} onLongPress={openDefaultFoodEntryDetails} />
+      <FoodSuggestionStrip suggestions={suggestions.data ?? []} onSelect={openFoodEntryDetails} onLongPress={openFoodEntryDetails} />
 
       <AppText variant="section">{title}</AppText>
-      {foods.isLoading || recent.isLoading || diary.isLoading ? (
+      {foods.isLoading || recent.isLoading ? (
         <LoadingState label={`Searching ${modePluralLabel}`} />
       ) : results.length ? (
         results.map((food) => (
           <FoodRow
             key={food.id}
             food={food}
-            onQuickAdd={() => openDefaultFoodEntryDetails(food)}
+            onQuickAdd={() => openFoodEntryDetails(food)}
           />
         ))
       ) : (
@@ -134,6 +141,16 @@ function FoodRow({
 }
 
 const styles = StyleSheet.create({
+  targetMealRow: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 32,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
   searchBox: {
     alignItems: 'center',
     borderRadius: 12,

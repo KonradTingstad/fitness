@@ -27,15 +27,6 @@ import { ComponentType, useCallback, useEffect, useMemo, useRef, useState } from
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import Animated, {
-  useAnimatedProps,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
-import Svg, { Circle, G } from 'react-native-svg';
 
 import { AppText } from '@/components/AppText';
 import { EmptyState } from '@/components/EmptyState';
@@ -43,10 +34,10 @@ import { LoadingState } from '@/components/LoadingState';
 import {
   addWater,
   addDiaryEntry,
+  deleteDiaryEntry,
   deleteSavedMeal,
   duplicateSavedMeal,
   logSavedMeal,
-  renameSavedMeal,
 } from '@/data/repositories/nutritionRepository';
 import { updateGoals, updateMealsPerDayTarget } from '@/data/repositories/settingsRepository';
 import { shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
@@ -60,7 +51,6 @@ import {
   useNutritionLibrary,
   useProfileBundle,
   useRecentFoods,
-  useWeeklyCalories,
 } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { FoodMacroChips } from '@/features/nutrition/components/FoodMacroChips';
@@ -73,12 +63,10 @@ import { useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type NutritionTab = 'diary' | 'search' | 'meals' | 'goals';
+type DiaryMealFilter = 'all' | MealSlot;
 type SearchFilter = 'All' | 'Recent' | 'Favorites' | 'Breakfast' | 'Lunch' | 'Dinner' | 'Snacks';
-type CalorieFeedback = { id: number; label: string };
 type NutritionLibraryData = { savedMeals: SavedMeal[]; recipes: unknown[] };
 type GoalEditorType = Extract<GoalType, 'lose' | 'gain' | 'maintain'>;
-
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const NUTRITION_TABS: Array<{ key: NutritionTab; label: string }> = [
   { key: 'diary', label: 'Diary' },
@@ -122,12 +110,25 @@ function roundMetric(value: number): number {
 }
 
 function entryCalories(entry: DiaryEntry): number {
-  return entry.caloriesSnapshot * entry.servings;
+  return entry.totalCalories ?? entry.caloriesSnapshot * entry.servings;
 }
 
 function mealTotals(savedMeal: SavedMeal, foodsById: Map<string, FoodItem>) {
   const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
   for (const item of savedMeal.items) {
+    if (
+      item.totalCalories != null &&
+      item.totalProteinG != null &&
+      item.totalCarbsG != null &&
+      item.totalFatG != null
+    ) {
+      totals.calories += item.totalCalories;
+      totals.protein += item.totalProteinG;
+      totals.carbs += item.totalCarbsG;
+      totals.fat += item.totalFatG;
+      continue;
+    }
+
     const food = foodsById.get(item.foodItemId);
     if (food) {
       totals.calories += food.calories * item.servings;
@@ -155,28 +156,6 @@ function mealIngredientPreview(savedMeal: SavedMeal, foodsById: Map<string, Food
   if (!names.length) return savedMeal.items.length ? `${savedMeal.items.length} ingredients` : 'No ingredients yet';
   const visible = names.slice(0, 3).join(', ');
   return names.length > 3 ? `${visible} +${names.length - 3}` : visible;
-}
-
-function resolveSavedMealSlot(savedMeal: SavedMeal, fallback: MealSlot): MealSlot {
-  const counts: Record<MealSlot, number> = {
-    breakfast: 0,
-    lunch: 0,
-    dinner: 0,
-    snacks: 0,
-  };
-
-  for (const item of savedMeal.items) {
-    if (item.mealSlot) {
-      counts[item.mealSlot] += 1;
-    }
-  }
-
-  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (sorted[0][1] > 0) {
-    return sorted[0][0] as MealSlot;
-  }
-
-  return fallback;
 }
 
 function duplicateMealName(sourceName: string, existingMeals: SavedMeal[]): string {
@@ -265,146 +244,108 @@ function mealItemLabel(count: number): string {
   return `${count} item${count === 1 ? '' : 's'}`;
 }
 
-function weekdayAbbrev(localDate: string): string {
-  const label = new Date(`${localDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short' });
-  return label.slice(0, 1);
-}
-
 function lastMealFoodLabel(entries: DiaryEntry[]): string {
   if (!entries.length) return 'No food logged yet';
   return entries[entries.length - 1].foodNameSnapshot;
 }
 
-function CalorieHeroRing({ progress }: { progress: number }) {
-  const theme = useAppTheme();
-  const size = 264;
-  const strokeWidth = 20;
-  const center = size / 2;
-  const radius = center - strokeWidth / 2;
-  const circumference = 2 * Math.PI * radius;
-  const normalized = Math.max(0, Math.min(1, progress));
-  const animatedProgress = useSharedValue(0);
-  const animatedProps = useAnimatedProps(() => ({
-    strokeDashoffset: circumference * (1 - animatedProgress.value),
-  }));
-
-  useEffect(() => {
-    animatedProgress.value = withTiming(normalized, { duration: 850 });
-  }, [animatedProgress, normalized]);
-
+function CompactMacroStat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <View style={styles.calorieHeroRing}>
-      <Svg width={size} height={size}>
-        <G rotation={-90} origin={`${center},${center}`}>
-          <Circle cx={center} cy={center} fill="none" r={radius} stroke="rgba(255,255,255,0.055)" strokeWidth={strokeWidth} />
-          <AnimatedCircle
-            animatedProps={animatedProps}
-            cx={center}
-            cy={center}
-            fill="none"
-            r={radius}
-            stroke={theme.colors.primary}
-            strokeDasharray={`${circumference} ${circumference}`}
-            strokeLinecap="round"
-            strokeOpacity={0.18}
-            strokeWidth={strokeWidth + 8}
-          />
-          <AnimatedCircle
-            animatedProps={animatedProps}
-            cx={center}
-            cy={center}
-            fill="none"
-            r={radius}
-            stroke={theme.colors.primary}
-            strokeDasharray={`${circumference} ${circumference}`}
-            strokeLinecap="round"
-            strokeOpacity={0.76}
-            strokeWidth={strokeWidth}
-          />
-        </G>
-      </Svg>
+    <View style={styles.compactMacroStat}>
+      <View style={[styles.compactMacroDot, { backgroundColor: color }]} />
+      <AppText muted variant="small" weight="700" numberOfLines={1}>
+        {label}
+      </AppText>
+      <AppText weight="800" numberOfLines={1}>
+        {value}g
+      </AppText>
     </View>
   );
 }
 
-function CalorieFeedbackBadge({ feedback }: { feedback?: CalorieFeedback | null }) {
-  const theme = useAppTheme();
-  const opacity = useSharedValue(0);
-  const translateY = useSharedValue(8);
-  const scale = useSharedValue(0.96);
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{ translateY: translateY.value }, { scale: scale.value }],
-  }));
-
-  useEffect(() => {
-    if (!feedback) return;
-    opacity.value = withSequence(withTiming(1, { duration: 160 }), withDelay(720, withTiming(0, { duration: 320 })));
-    translateY.value = withSequence(withTiming(0, { duration: 180 }), withDelay(720, withTiming(-8, { duration: 320 })));
-    scale.value = withSequence(withTiming(1, { duration: 180 }), withDelay(720, withTiming(0.98, { duration: 320 })));
-  }, [feedback, opacity, scale, translateY]);
-
-  if (!feedback) return null;
-
-  return (
-    <Animated.View style={[styles.calorieFeedbackBadge, { backgroundColor: 'rgba(53,199,122,0.18)' }, animatedStyle]}>
-      <AppText weight="800" style={{ color: theme.colors.primary }}>
-        {feedback.label}
-      </AppText>
-    </Animated.View>
-  );
-}
-
-function MacroProgressItem({
-  label,
-  value,
-  goal,
-  color,
-  tint,
+function CompactNutritionSummary({
+  calories,
+  target,
+  progress,
+  protein,
+  carbs,
+  fat,
+  detailsExpanded,
+  onToggleDetails,
 }: {
-  label: string;
-  value: number;
-  goal: number;
-  color: string;
-  tint: string;
+  calories: number;
+  target: number;
+  progress: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  detailsExpanded: boolean;
+  onToggleDetails: () => void;
 }) {
   const theme = useAppTheme();
-  const progress = clampedProgress(value, goal);
-  const percent = progressPercent(progress);
+  const DetailsChevron = detailsExpanded ? ChevronUp : ChevronDown;
 
   return (
-    <View style={[styles.macroDashboardItem, { backgroundColor: tint }]}>
-      <View pointerEvents="none" style={[styles.macroDashboardGlow, { backgroundColor: color }]} />
-      <View style={[styles.macroDashboardAccent, { backgroundColor: color }]} />
-      <View style={styles.macroDashboardTop}>
-        <View style={styles.macroDashboardLabelRow}>
-          <View style={[styles.macroDashboardDot, { backgroundColor: color }]} />
-          <AppText weight="800" variant="small">
-            {label}
+    <NutritionCard style={styles.compactSummaryCard}>
+      <View style={styles.compactSummaryTop}>
+        <View style={styles.compactCaloriesBlock}>
+          <AppText muted variant="small" weight="800" style={styles.compactSummaryLabel}>
+            Today
+          </AppText>
+          <View style={styles.compactCaloriesRow}>
+            <AppText style={styles.compactCaloriesValue}>{calories}</AppText>
+            <AppText weight="800" style={styles.compactCaloriesUnit}>
+              kcal
+            </AppText>
+          </View>
+          <AppText muted variant="small">
+            {target > 0 ? `${progressPercent(progress)}% of ${target} kcal` : 'No calorie target set'}
           </AppText>
         </View>
-        <View style={[styles.macroPercentPill, { backgroundColor: theme.colors.surfaceAlt }]}>
-          <AppText weight="800" variant="small" style={{ color }}>
-            {percent}%
-          </AppText>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onToggleDetails}
+          style={({ pressed }) => [styles.compactDetailsButton, { backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.82 : 1 }]}
+        >
+          <AppText weight="800">{detailsExpanded ? 'Hide' : 'Details'}</AppText>
+          <DetailsChevron size={16} color={theme.colors.muted} />
+        </Pressable>
       </View>
-      <View>
-        <AppText style={styles.macroDashboardValue}>
-          {value}g
-        </AppText>
-        <AppText muted variant="small">
-          target {goal}g
-        </AppText>
+
+      <View style={styles.compactSummaryTrack}>
+        <View style={[styles.compactSummaryFill, { backgroundColor: theme.colors.primary, width: `${progress * 100}%` }]} />
       </View>
-      <View style={[styles.thinProgressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
-        <View style={[styles.thinProgressFill, { backgroundColor: color, width: `${progress * 100}%` }]} />
+
+      <View style={styles.compactMacroRow}>
+        <CompactMacroStat label="Protein" value={protein} color={theme.colors.primary} />
+        <CompactMacroStat label="Carbs" value={carbs} color={theme.colors.info} />
+        <CompactMacroStat label="Fat" value={fat} color={theme.colors.warning} />
       </View>
+    </NutritionCard>
+  );
+}
+
+function DetailMetric({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
+  return (
+    <View style={styles.detailMetric}>
+      <View style={[styles.detailMetricDot, { backgroundColor: color }]} />
+      <AppText muted variant="small">
+        {label}
+      </AppText>
+      <AppText weight="800">{value}</AppText>
     </View>
   );
 }
 
-function CaloriesDashboardCard({
+function DailyNutritionDetails({
   calories,
   target,
   remaining,
@@ -413,7 +354,9 @@ function CaloriesDashboardCard({
   carbs,
   fat,
   goals,
-  feedback,
+  waterMl,
+  streak,
+  streakLoading,
 }: {
   calories: number;
   target: number;
@@ -423,110 +366,163 @@ function CaloriesDashboardCard({
   carbs: number;
   fat: number;
   goals: GoalSettings;
-  feedback?: CalorieFeedback | null;
+  waterMl: number;
+  streak: number;
+  streakLoading: boolean;
 }) {
   const theme = useAppTheme();
 
   return (
-    <NutritionCard style={styles.caloriesDashboardCard}>
-      <View style={styles.calorieHero}>
-        <CalorieHeroRing progress={progress} />
-        <View style={styles.calorieHeroCenter}>
-          <CalorieFeedbackBadge feedback={feedback} />
-          <AppText muted weight="800" style={styles.calorieHeroLabel}>
+    <NutritionCard style={styles.dailyDetailsCard}>
+      <View style={styles.dailyDetailsHeader}>
+        <AppText variant="section">Daily details</AppText>
+        <AppText weight="800" style={{ color: remaining >= 0 ? theme.colors.primary : theme.colors.warning }}>
+          {remainingCalorieLabel(remaining)}
+        </AppText>
+      </View>
+
+      <View style={styles.detailsProgressBlock}>
+        <View style={styles.detailsProgressLabels}>
+          <AppText muted variant="small">
             Calories
           </AppText>
-          <View style={styles.calorieHeroValueRow}>
-            <AppText style={[styles.calorieHeroValue, { color: theme.colors.text }]}>{calories}</AppText>
-            <AppText style={[styles.calorieHeroUnit, { color: theme.colors.text }]}>kcal</AppText>
-          </View>
-          <AppText weight="800" style={[styles.calorieHeroLeft, { color: remaining >= 0 ? theme.colors.primary : theme.colors.warning }]}>
-            {remainingCalorieLabel(remaining)}
+          <AppText muted variant="small">
+            {calories} / {target} kcal
           </AppText>
-          <AppText muted style={styles.calorieHeroTarget}>
-            {progressPercent(progress)}% of {target} kcal
-          </AppText>
+        </View>
+        <View style={[styles.detailProgressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
+          <View style={[styles.detailProgressFill, { backgroundColor: theme.colors.primary, width: `${progress * 100}%` }]} />
         </View>
       </View>
 
-      <View style={styles.macroDashboardRow}>
-        <MacroProgressItem label="Protein" value={protein} goal={goals.proteinTargetG} color={theme.colors.primary} tint="rgba(53,199,122,0.09)" />
-        <MacroProgressItem label="Carbs" value={carbs} goal={goals.carbTargetG} color={theme.colors.info} tint="rgba(55,156,255,0.09)" />
-        <MacroProgressItem label="Fat" value={fat} goal={goals.fatTargetG} color={theme.colors.warning} tint="rgba(244,183,64,0.1)" />
+      <View style={styles.detailMetricsGrid}>
+        <DetailMetric label="Protein" value={`${protein}/${roundMetric(goals.proteinTargetG)}g`} color={theme.colors.primary} />
+        <DetailMetric label="Carbs" value={`${carbs}/${roundMetric(goals.carbTargetG)}g`} color={theme.colors.info} />
+        <DetailMetric label="Fat" value={`${fat}/${roundMetric(goals.fatTargetG)}g`} color={theme.colors.warning} />
+        <DetailMetric label="Water" value={`${roundMetric(waterMl)} ml`} color={theme.colors.info} />
+      </View>
+
+      <View style={[styles.streakInline, { backgroundColor: theme.colors.surfaceAlt }]}>
+        <Flame size={15} color={streak > 0 ? theme.colors.warning : theme.colors.muted} />
+        <AppText muted variant="small" weight="700">
+          {streakLoading ? 'Loading streak' : `${streak} day calorie streak`}
+        </AppText>
       </View>
     </NutritionCard>
   );
 }
 
-function CalorieStreakBadge({ streak, isLoading }: { streak: number; isLoading: boolean }) {
+function MealNavRow({
+  active,
+  sections,
+  onSelect,
+}: {
+  active: DiaryMealFilter;
+  sections: Array<{ slot: MealSlot; label: string; count: number }>;
+  onSelect: (slot: DiaryMealFilter) => void;
+}) {
   const theme = useAppTheme();
-  const active = streak > 0;
+  const totalCount = sections.reduce((sum, section) => sum + section.count, 0);
+  const items: Array<{ slot: DiaryMealFilter; label: string; count: number }> = [
+    { slot: 'all', label: 'All', count: totalCount },
+    ...sections,
+  ];
 
   return (
-    <View
-      style={[
-        styles.calorieStreakBadge,
-        {
-          backgroundColor: active ? 'rgba(244,183,64,0.14)' : 'rgba(31,39,48,0.45)',
-          borderColor: active ? 'rgba(244,183,64,0.42)' : 'rgba(90,102,116,0.35)',
-        },
-      ]}
-    >
-      <Flame size={14} color={active ? theme.colors.warning : theme.colors.muted} />
-      <AppText muted variant="small" weight="700" style={styles.calorieStreakLabel}>
-        {isLoading ? 'Streak…' : `${streak} day streak`}
-      </AppText>
+    <View style={styles.mealNavRow}>
+      {items.map((item) => {
+        const selected = active === item.slot;
+        return (
+          <Pressable
+            key={item.slot}
+            accessibilityRole="button"
+            onPress={() => onSelect(item.slot)}
+            style={({ pressed }) => [
+              styles.mealNavChip,
+              {
+                backgroundColor: selected ? 'rgba(53,199,122,0.15)' : 'rgba(31,39,48,0.42)',
+                borderColor: selected ? 'rgba(53,199,122,0.34)' : 'transparent',
+                opacity: pressed ? 0.82 : 1,
+              },
+            ]}
+          >
+            <AppText weight={selected ? '800' : '700'} variant="small" numberOfLines={1} style={{ color: selected ? theme.colors.primary : theme.colors.text }}>
+              {item.label}
+            </AppText>
+            <AppText muted variant="small" weight="700">
+              {item.count}
+            </AppText>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
-function WeeklyCaloriesCard({
-  points,
-  isLoading,
+function SavedMealPicker({
+  mealSlot,
+  savedMeals,
+  foodsById,
+  pendingMealId,
+  onSelect,
+  onClose,
 }: {
-  points: Array<{ localDate: string; calories: number; label: string }>;
-  isLoading: boolean;
+  mealSlot: MealSlot;
+  savedMeals: SavedMeal[];
+  foodsById: Map<string, FoodItem>;
+  pendingMealId?: string;
+  onSelect: (meal: SavedMeal) => void;
+  onClose: () => void;
 }) {
   const theme = useAppTheme();
-  const maxCalories = Math.max(1, ...points.map((point) => point.calories));
-  const avgCalories = points.length ? roundMetric(points.reduce((sum, point) => sum + point.calories, 0) / points.length) : 0;
-  const today = points[points.length - 1];
 
   return (
-    <NutritionCard style={styles.weeklyCaloriesCard}>
-      <View style={styles.weeklyCaloriesHeader}>
-        <AppText variant="section">Last 7 days</AppText>
-        <AppText muted>{avgCalories} avg kcal</AppText>
+    <NutritionCard style={styles.savedMealPickerCard}>
+      <View style={styles.savedMealPickerHeader}>
+        <View>
+          <AppText variant="section">Add saved meal</AppText>
+          <AppText muted variant="small">
+            Logging to {MEAL_SECTIONS.find((section) => section.slot === mealSlot)?.label ?? mealSlot}
+          </AppText>
+        </View>
+        <Pressable accessibilityRole="button" onPress={onClose}>
+          <AppText weight="800" style={{ color: theme.colors.primary }}>
+            Close
+          </AppText>
+        </Pressable>
       </View>
 
-      <View style={styles.weeklyCaloriesChart}>
-        {points.map((point, index) => {
-          const heightPct = isLoading ? 0.24 + (index % 4) * 0.14 : Math.max(0.12, point.calories / maxCalories);
-          const isToday = index === points.length - 1;
+      {savedMeals.length ? (
+        savedMeals.map((meal) => {
+          const totals = mealTotals(meal, foodsById);
+          const pending = pendingMealId === meal.id;
           return (
-            <View key={point.localDate} style={styles.weeklyCaloriesBarItem}>
-              <View style={[styles.weeklyCaloriesBarTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
-                <View
-                  style={[
-                    styles.weeklyCaloriesBarFill,
-                    {
-                      backgroundColor: isToday ? theme.colors.primary : 'rgba(162,170,182,0.52)',
-                      height: `${Math.round(heightPct * 100)}%`,
-                    },
-                  ]}
-                />
+            <Pressable
+              key={meal.id}
+              accessibilityRole="button"
+              disabled={Boolean(pendingMealId)}
+              onPress={() => onSelect(meal)}
+              style={({ pressed }) => [styles.savedMealPickerRow, { opacity: pendingMealId ? (pending ? 0.72 : 0.48) : pressed ? 0.82 : 1 }]}
+            >
+              <View style={styles.savedMealPickerCopy}>
+                <AppText weight="800" numberOfLines={1}>
+                  {meal.name}
+                </AppText>
+                <AppText muted variant="small">
+                  {meal.items.length} item{meal.items.length === 1 ? '' : 's'} - {totals.calories} kcal
+                </AppText>
               </View>
-              <AppText muted variant="small" style={styles.weeklyCaloriesLabel}>
-                {point.label}
+              <AppText weight="800" style={{ color: theme.colors.primary }}>
+                {pending ? 'Adding...' : 'Add'}
               </AppText>
-            </View>
+            </Pressable>
           );
-        })}
-      </View>
-
-      <AppText muted variant="small">
-        {isLoading ? 'Loading weekly calories…' : `${today?.calories ?? 0} kcal today`}
-      </AppText>
+        })
+      ) : (
+        <View style={styles.savedMealPickerEmpty}>
+          <AppText muted>No saved meals yet.</AppText>
+        </View>
+      )}
     </NutritionCard>
   );
 }
@@ -545,8 +541,12 @@ function MealSummaryCard({
   onToggle,
   onAddFood,
   onAddDrink,
+  onAddSavedMeal,
+  onSaveMeal,
   onQuickAddLastFood,
   onRepeatPreviousMeal,
+  onDeleteEntry,
+  deletingEntryId,
 }: {
   label: string;
   calories: number;
@@ -561,8 +561,12 @@ function MealSummaryCard({
   onToggle: () => void;
   onAddFood: () => void;
   onAddDrink: () => void;
+  onAddSavedMeal: () => void;
+  onSaveMeal?: () => void;
   onQuickAddLastFood: () => void;
   onRepeatPreviousMeal: () => void;
+  onDeleteEntry: (entry: DiaryEntry) => void;
+  deletingEntryId?: string;
 }) {
   const theme = useAppTheme();
   const progress = clampedProgress(calories, calorieTarget);
@@ -606,29 +610,37 @@ function MealSummaryCard({
       }}
     >
       <NutritionCard style={styles.mealSummaryCard}>
-        <View pointerEvents="none" style={[styles.mealCardGlow, { backgroundColor: color }]} />
-        <Pressable accessibilityRole="button" onPress={onToggle} style={({ pressed }) => [styles.mealSummaryMain, { opacity: pressed ? 0.86 : 1 }]}>
-          <View style={[styles.mealSummaryIcon, { backgroundColor: tint }]}>
-            <Icon size={22} color={color} strokeWidth={2.4} />
-          </View>
-          <View style={styles.mealSummaryCopy}>
-            <View style={styles.mealSummaryTitleRow}>
-              <AppText weight="800" numberOfLines={1} style={styles.mealSummaryTitle}>
-                {label}
+        <View style={styles.mealSummaryTopRow}>
+          <Pressable accessibilityRole="button" onPress={onToggle} style={({ pressed }) => [styles.mealSummaryToggle, { opacity: pressed ? 0.86 : 1 }]}>
+            <View style={[styles.mealSummaryIcon, { backgroundColor: tint }]}>
+              <Icon size={20} color={color} strokeWidth={2.4} />
+            </View>
+            <View style={styles.mealSummaryCopy}>
+              <View style={styles.mealSummaryTitleRow}>
+                <AppText weight="800" numberOfLines={1} style={styles.mealSummaryTitle}>
+                  {label}
+                </AppText>
+                <AppText weight="800" variant="small" style={{ color }}>
+                  {progressPercent(progress)}%
+                </AppText>
+              </View>
+              <AppText muted>
+                {calories} kcal • {mealItemLabel(count)}
               </AppText>
-              <AppText weight="800" style={{ color }}>
-                {progressPercent(progress)}%
+              <AppText muted numberOfLines={1} style={styles.mealLastFood}>
+                {lastMealFoodLabel(entries)}
               </AppText>
             </View>
-            <AppText muted>
-              {calories} kcal • {mealItemLabel(count)}
+            <ProgressChevron size={18} color={theme.colors.muted} />
+          </Pressable>
+
+          <Pressable accessibilityRole="button" onPress={onAddFood} style={({ pressed }) => [styles.mealSummaryAddButton, { borderColor: color, opacity: pressed ? 0.78 : 1 }]}>
+            <Plus size={15} color={color} strokeWidth={2.6} />
+            <AppText weight="800" variant="small" style={{ color }}>
+              Add
             </AppText>
-            <AppText muted numberOfLines={1} style={styles.mealLastFood}>
-              {lastMealFoodLabel(entries)}
-            </AppText>
-          </View>
-          <ProgressChevron size={20} color={theme.colors.muted} />
-        </Pressable>
+          </Pressable>
+        </View>
 
         <View style={[styles.mealProgressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
           <View style={[styles.mealProgressFill, { backgroundColor: color, width: `${progress * 100}%` }]} />
@@ -648,9 +660,22 @@ function MealSummaryCard({
                       {entry.servings} serving{entry.servings === 1 ? '' : 's'}
                     </AppText>
                   </View>
-                  <AppText weight="800" style={{ color }}>
-                    {roundMetric(entryCalories(entry))} kcal
-                  </AppText>
+                  <View style={styles.mealFoodTrail}>
+                    <AppText weight="800" style={{ color }}>
+                      {roundMetric(entryCalories(entry))} kcal
+                    </AppText>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={Boolean(deletingEntryId)}
+                      onPress={() => onDeleteEntry(entry)}
+                      style={({ pressed }) => [
+                        styles.mealFoodDeleteButton,
+                        { opacity: deletingEntryId ? 0.45 : pressed ? 0.78 : 1 },
+                      ]}
+                    >
+                      <Trash2 size={14} color={theme.colors.danger} strokeWidth={2.4} />
+                    </Pressable>
+                  </View>
                 </View>
               ))
             ) : (
@@ -687,6 +712,24 @@ function MealSummaryCard({
                 </AppText>
                 <ChevronRight size={16} color={theme.colors.muted} />
               </Pressable>
+
+              <Pressable accessibilityRole="button" onPress={onAddSavedMeal} style={({ pressed }) => [styles.mealActionPill, { opacity: pressed ? 0.82 : 1 }]}>
+                <Soup size={16} color={color} strokeWidth={2.4} />
+                <AppText weight="800" style={{ color }}>
+                  Add saved meal
+                </AppText>
+                <ChevronRight size={16} color={theme.colors.muted} />
+              </Pressable>
+
+              {entries.length > 1 && onSaveMeal ? (
+                <Pressable accessibilityRole="button" onPress={onSaveMeal} style={({ pressed }) => [styles.mealActionPill, { opacity: pressed ? 0.82 : 1 }]}>
+                  <Star size={16} color={color} strokeWidth={2.4} />
+                  <AppText weight="800" style={{ color }}>
+                    Save meal
+                  </AppText>
+                  <ChevronRight size={16} color={theme.colors.muted} />
+                </Pressable>
+              ) : null}
             </View>
           </View>
         ) : null}
@@ -701,12 +744,11 @@ function SavedMealCard({
   totals,
   ingredients,
   recentlyAdded,
-  quickAddPending,
-  editPending,
+  addPending,
   duplicatePending,
   deletePending,
-  onQuickAdd,
-  onEdit,
+  onOpen,
+  onAddToMeal,
   onDuplicate,
   onDelete,
 }: {
@@ -715,19 +757,18 @@ function SavedMealCard({
   totals: { calories: number; protein: number; carbs: number; fat: number };
   ingredients: string;
   recentlyAdded: boolean;
-  quickAddPending: boolean;
-  editPending: boolean;
+  addPending: boolean;
   duplicatePending: boolean;
   deletePending: boolean;
-  onQuickAdd: () => void;
-  onEdit: () => void;
+  onOpen: () => void;
+  onAddToMeal: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const theme = useAppTheme();
   const swipeableRef = useRef<Swipeable | null>(null);
-  const actionPending = editPending || duplicatePending || deletePending;
-  const tapDisabled = actionPending || quickAddPending;
+  const actionPending = duplicatePending || deletePending;
+  const tapDisabled = actionPending || addPending;
 
   const runAction = (action: () => void) => {
     swipeableRef.current?.close();
@@ -762,7 +803,7 @@ function SavedMealCard({
       <Pressable
         accessibilityRole="button"
         disabled={actionPending}
-        onPress={() => runAction(onEdit)}
+        onPress={() => runAction(onOpen)}
         style={({ pressed }) => [
           styles.savedMealSwipeAction,
           styles.savedMealSwipeMiddleAction,
@@ -773,7 +814,7 @@ function SavedMealCard({
         ]}
       >
         <Pencil size={16} color={theme.colors.text} strokeWidth={2.5} />
-        <AppText weight="800">Edit</AppText>
+        <AppText weight="800">Open</AppText>
       </Pressable>
       <Pressable
         accessibilityRole="button"
@@ -809,42 +850,116 @@ function SavedMealCard({
       renderRightActions={renderRightActions}
     >
       <NutritionCard style={[styles.savedMealCard, recentlyAdded && styles.savedMealCardAdded]}>
-        <Pressable
-          accessibilityRole="button"
-          disabled={tapDisabled}
-          onPress={onQuickAdd}
-          style={({ pressed }) => [styles.savedMealRow, { opacity: tapDisabled ? 0.62 : pressed ? 0.84 : 1 }]}
-        >
-          <View style={[styles.savedMealThumb, { backgroundColor: theme.colors.surfaceAlt }]}>
-            <Icon size={22} color={theme.colors.primary} />
-          </View>
-          <View style={styles.savedMealCopy}>
-            <AppText weight="800" numberOfLines={1} style={styles.savedMealTitle}>
-              {meal.name}
-            </AppText>
-            <AppText muted numberOfLines={1} style={styles.savedMealPreview}>
-              {ingredients}
-            </AppText>
-            <AppText weight="800" style={styles.savedMealCalories}>
-              {totals.calories} kcal
-            </AppText>
-            <MealMacroVisual protein={totals.protein} carbs={totals.carbs} fat={totals.fat} />
-          </View>
-          <View style={styles.savedMealTrail}>
-            {quickAddPending ? (
-              <AppText weight="800" style={{ color: theme.colors.primary }}>
-                Adding...
+        <View style={styles.savedMealRow}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={tapDisabled}
+            onPress={onOpen}
+            style={({ pressed }) => [styles.savedMealMainTouch, { opacity: tapDisabled ? 0.62 : pressed ? 0.84 : 1 }]}
+          >
+            <View style={[styles.savedMealThumb, { backgroundColor: theme.colors.surfaceAlt }]}>
+              <Icon size={22} color={theme.colors.primary} />
+            </View>
+            <View style={styles.savedMealCopy}>
+              <AppText weight="800" numberOfLines={1} style={styles.savedMealTitle}>
+                {meal.name}
               </AppText>
-            ) : recentlyAdded ? (
+              <AppText muted numberOfLines={1} style={styles.savedMealPreview}>
+                {ingredients}
+              </AppText>
+              <AppText weight="800" style={styles.savedMealCalories}>
+                {totals.calories} kcal
+              </AppText>
+              <MealMacroVisual protein={totals.protein} carbs={totals.carbs} fat={totals.fat} />
+            </View>
+            <ChevronRight size={18} color={theme.colors.muted} />
+          </Pressable>
+          <View style={styles.savedMealTrail}>
+            {recentlyAdded && !addPending ? (
               <AppText weight="800" style={{ color: theme.colors.primary }}>
                 Added
               </AppText>
             ) : null}
-            <ChevronRight size={20} color={theme.colors.muted} />
+            <Pressable
+              accessibilityRole="button"
+              disabled={addPending}
+              onPress={() => runAction(onAddToMeal)}
+              style={({ pressed }) => [
+                styles.savedMealAddButton,
+                {
+                  backgroundColor: theme.colors.primary,
+                  opacity: addPending ? 0.52 : pressed ? 0.78 : 1,
+                },
+              ]}
+            >
+              <Plus size={14} color="#08100C" strokeWidth={2.8} />
+              <AppText weight="800" variant="small" style={{ color: '#08100C' }}>
+                {addPending ? 'Adding...' : 'Add'}
+              </AppText>
+            </Pressable>
           </View>
-        </Pressable>
+        </View>
       </NutritionCard>
     </Swipeable>
+  );
+}
+
+function SavedMealSlotPicker({
+  meal,
+  pending,
+  onClose,
+  onSelectSlot,
+}: {
+  meal: SavedMeal;
+  pending: boolean;
+  onClose: () => void;
+  onSelectSlot: (slot: MealSlot) => void;
+}) {
+  const theme = useAppTheme();
+
+  return (
+    <NutritionCard style={styles.savedMealSlotPickerCard}>
+      <View style={styles.savedMealSlotPickerHeader}>
+        <View style={styles.savedMealSlotPickerCopy}>
+          <AppText variant="section">Add meal to</AppText>
+          <AppText muted variant="small" numberOfLines={1}>
+            {meal.name}
+          </AppText>
+        </View>
+        <Pressable accessibilityRole="button" onPress={onClose} disabled={pending}>
+          <AppText weight="800" style={{ color: theme.colors.primary, opacity: pending ? 0.5 : 1 }}>
+            Close
+          </AppText>
+        </Pressable>
+      </View>
+
+      <View style={styles.savedMealSlotPickerOptions}>
+        {MEAL_SECTIONS.map((section) => {
+          const SlotIcon = section.icon;
+          return (
+            <Pressable
+              key={section.slot}
+              accessibilityRole="button"
+              disabled={pending}
+              onPress={() => onSelectSlot(section.slot)}
+              style={({ pressed }) => [
+                styles.savedMealSlotPickerOption,
+                {
+                  backgroundColor: pending ? 'rgba(31,39,48,0.28)' : section.tint,
+                  borderColor: pending ? 'transparent' : `${section.color}55`,
+                  opacity: pressed ? 0.82 : 1,
+                },
+              ]}
+            >
+              <SlotIcon size={16} color={section.color} strokeWidth={2.4} />
+              <AppText weight="800" style={{ color: pending ? theme.colors.muted : section.color }}>
+                {section.label}
+              </AppText>
+            </Pressable>
+          );
+        })}
+      </View>
+    </NutritionCard>
   );
 }
 
@@ -859,9 +974,10 @@ export function NutritionDiaryScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('All');
   const [manualRecentSearches, setManualRecentSearches] = useState<string[]>([]);
-  const previousCaloriesRef = useRef<number | null>(null);
-  const feedbackCounterRef = useRef(0);
-  const [calorieFeedback, setCalorieFeedback] = useState<CalorieFeedback | null>(null);
+  const [nutritionDetailsExpanded, setNutritionDetailsExpanded] = useState(false);
+  const [activeDiaryMeal, setActiveDiaryMeal] = useState<DiaryMealFilter>('all');
+  const [savedMealPickerSlot, setSavedMealPickerSlot] = useState<MealSlot | null>(null);
+  const [savedMealToLog, setSavedMealToLog] = useState<SavedMeal | null>(null);
   const [expandedMealSlots, setExpandedMealSlots] = useState<Set<MealSlot>>(() => new Set());
   const [recentlyAddedSavedMealId, setRecentlyAddedSavedMealId] = useState<string | null>(null);
   const [goalDraft, setGoalDraft] = useState<{
@@ -899,7 +1015,6 @@ export function NutritionDiaryScreen() {
   const searchedFoods = useFoodSearch(searchQuery, 'food');
   const foodCatalog = useFoodSearch('', 'all');
   const frequentlyLoggedFoods = useFrequentlyLoggedFoods('food');
-  const weeklyCalories = useWeeklyCalories(selectedDate);
   const calorieStreak = useCalorieStreak(selectedDate);
 
   const flashSavedMealAdded = (savedMealId: string) => {
@@ -961,6 +1076,19 @@ export function NutritionDiaryScreen() {
     onError: (error) => Alert.alert('Repeat previous meal', error instanceof Error ? error.message : 'Unable to repeat meal.'),
   });
 
+  const deleteDiaryEntryMutation = useMutation({
+    mutationFn: (input: { entryId: string }) => deleteDiaryEntry(input.entryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      invalidateFoodCaches();
+      void Haptics.selectionAsync();
+    },
+    onError: (error) => Alert.alert('Delete food', error instanceof Error ? error.message : 'Unable to delete food entry.'),
+  });
+
   const updateSavedMealsCache = (updater: (savedMeals: SavedMeal[]) => SavedMeal[]) => {
     queryClient.setQueryData<NutritionLibraryData | undefined>(queryKeys.nutritionLibrary, (current) => {
       if (!current) return current;
@@ -983,34 +1111,6 @@ export function NutritionDiaryScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     onError: (error) => Alert.alert('Meal quick add', error instanceof Error ? error.message : 'Unable to quick add meal.'),
-  });
-
-  const renameSavedMealMutation = useMutation({
-    mutationFn: (input: { savedMealId: string; name: string }) => renameSavedMeal(input.savedMealId, input.name),
-    onMutate: async (input) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.nutritionLibrary });
-      const previousData = queryClient.getQueryData<NutritionLibraryData>(queryKeys.nutritionLibrary);
-      updateSavedMealsCache((savedMeals) =>
-        savedMeals.map((meal) =>
-          meal.id === input.savedMealId
-            ? {
-                ...meal,
-                name: input.name,
-              }
-            : meal,
-        ),
-      );
-      return { previousData };
-    },
-    onError: (error, _input, context) => {
-      if (context?.previousData) {
-        queryClient.setQueryData(queryKeys.nutritionLibrary, context.previousData);
-      }
-      Alert.alert('Edit meal', error instanceof Error ? error.message : 'Unable to update meal name.');
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.nutritionLibrary });
-    },
   });
 
   const duplicateSavedMealMutation = useMutation({
@@ -1192,15 +1292,7 @@ export function NutritionDiaryScreen() {
     [diaryData?.byMeal, yesterdayDiary.data?.byMeal],
   );
 
-  const weeklyDates = useMemo(() => Array.from({ length: 7 }, (_, index) => shiftLocalDate(selectedDate, index - 6)), [selectedDate]);
-  const weeklyCaloriesPoints = useMemo(() => {
-    const byDate = new Map((weeklyCalories.data ?? []).map((row) => [row.localDate, roundMetric(row.totals.calories)]));
-    return weeklyDates.map((date) => ({
-      localDate: date,
-      calories: byDate.get(date) ?? 0,
-      label: weekdayAbbrev(date),
-    }));
-  }, [weeklyCalories.data, weeklyDates]);
+  const visibleMealSections = activeDiaryMeal === 'all' ? mealSections : mealSections.filter((section) => section.slot === activeDiaryMeal);
 
   const calorieTarget = goals?.calorieTarget ?? 0;
   const calories = roundMetric(diaryData?.totals.calories ?? 0);
@@ -1227,19 +1319,6 @@ export function NutritionDiaryScreen() {
     if (typeof mealsPerDayTarget.data !== 'number') return;
     setGoalDraft((current) => ({ ...current, mealsPerDayTarget: String(mealsPerDayTarget.data) }));
   }, [mealsPerDayTarget.data]);
-
-  useEffect(() => {
-    if (!diaryData || !goals) {
-      return;
-    }
-
-    const previousCalories = previousCaloriesRef.current;
-    if (previousCalories !== null && calories > previousCalories) {
-      feedbackCounterRef.current += 1;
-      setCalorieFeedback({ id: feedbackCounterRef.current, label: `+${calories - previousCalories} kcal` });
-    }
-    previousCaloriesRef.current = calories;
-  }, [calories, diaryData, goals]);
 
   const searchBase = searchQuery.trim().length ? searchList : recentList;
   const filteredSearchResults = useMemo(() => {
@@ -1269,13 +1348,9 @@ export function NutritionDiaryScreen() {
   );
 
   const favoriteMeals = mealCards.filter((item) => item.meal.isFavorite);
-  const activeSearchMealSlot = FILTER_TO_SLOT[searchFilter] ?? 'lunch';
   const recentMealsPreview = recentList.slice(0, 3);
-  const lastUsedSearchMealSlot = useMemo(
-    () => resolveLastUsedMealSlot(diaryData?.day.entries ?? [], activeSearchMealSlot),
-    [activeSearchMealSlot, diaryData?.day.entries],
-  );
-  const defaultSavedMealSlot = useMemo(() => resolveLastUsedMealSlot(diaryData?.day.entries ?? [], 'lunch'), [diaryData?.day.entries]);
+  const globalDefaultMealSlot = useMemo(() => resolveLastUsedMealSlot(diaryData?.day.entries ?? [], 'lunch'), [diaryData?.day.entries]);
+  const activeSearchMealSlot = FILTER_TO_SLOT[searchFilter] ?? globalDefaultMealSlot;
 
   const rememberSearch = (value: string) => {
     const trimmed = value.trim();
@@ -1291,6 +1366,16 @@ export function NutritionDiaryScreen() {
       } else {
         next.add(slot);
       }
+      return next;
+    });
+  };
+
+  const selectDiaryMeal = (slot: DiaryMealFilter) => {
+    setActiveDiaryMeal(slot);
+    if (slot === 'all') return;
+    setExpandedMealSlots((current) => {
+      const next = new Set(current);
+      next.add(slot);
       return next;
     });
   };
@@ -1312,16 +1397,30 @@ export function NutritionDiaryScreen() {
     repeatPreviousMeal.mutate({ mealSlot: slot, entries: previousEntries });
   };
 
+  const confirmDeleteMealEntry = (entry: DiaryEntry) => {
+    Alert.alert('Delete food', `Remove "${entry.foodNameSnapshot}" from this meal?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          deleteDiaryEntryMutation.mutate({ entryId: entry.id });
+        },
+      },
+    ]);
+  };
+
   const quickAddSearchFood = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.selectionAsync();
-    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate: selectedDate });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: activeSearchMealSlot, localDate: selectedDate });
   };
 
   const openSearchFoodDetails = (food: FoodItem) => {
     rememberSearch(food.name);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    navigation.navigate('FoodEntryDetails', { food, mealSlot: lastUsedSearchMealSlot, localDate: selectedDate });
+    navigation.navigate('FoodEntryDetails', { food, mealSlot: activeSearchMealSlot, localDate: selectedDate });
   };
 
   const showSearchFilter = (filter: SearchFilter) => {
@@ -1487,7 +1586,7 @@ export function NutritionDiaryScreen() {
 
   const logMealFromGoals = () => {
     void Haptics.selectionAsync();
-    navigation.navigate('FoodSearch', { mealSlot: defaultSavedMealSlot, localDate: selectedDate, mode: 'food' });
+    navigation.navigate('FoodSearch', { mealSlot: globalDefaultMealSlot, localDate: selectedDate, mode: 'food' });
   };
 
   const logWaterFromGoals = () => {
@@ -1495,41 +1594,30 @@ export function NutritionDiaryScreen() {
     quickLogWaterMutation.mutate(250);
   };
 
-  const quickAddSavedMeal = (meal: SavedMeal) => {
-    if (quickAddSavedMealMutation.isPending && quickAddSavedMealMutation.variables?.savedMealId === meal.id) {
+  const openSavedMealDetails = (meal: SavedMeal) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    navigation.navigate('CreateMeal', { savedMealId: meal.id });
+  };
+
+  const openSavedMealSlotPicker = (meal: SavedMeal) => {
+    if (quickAddSavedMealMutation.isPending) {
+      return;
+    }
+    void Haptics.selectionAsync();
+    setSavedMealToLog(meal);
+  };
+
+  const addSavedMealToDiarySlot = (meal: SavedMeal, mealSlot: MealSlot) => {
+    if (quickAddSavedMealMutation.isPending) {
       return;
     }
     void Haptics.selectionAsync();
     quickAddSavedMealMutation.mutate({
       savedMealId: meal.id,
-      mealSlot: resolveSavedMealSlot(meal, defaultSavedMealSlot),
+      mealSlot,
     });
-  };
-
-  const promptRenameSavedMeal = (meal: SavedMeal) => {
-    Alert.prompt(
-      'Edit meal',
-      'Update saved meal name.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Save',
-          isPreferred: true,
-          onPress: (value?: string | { login: string; password: string }) => {
-            const nextName = typeof value === 'string' ? value.trim() : '';
-            if (!nextName.length) {
-              Alert.alert('Edit meal', 'Meal name cannot be empty.');
-              return;
-            }
-            if (nextName === meal.name) return;
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            renameSavedMealMutation.mutate({ savedMealId: meal.id, name: nextName });
-          },
-        },
-      ],
-      'plain-text',
-      meal.name,
-    );
+    setSavedMealPickerSlot(null);
+    setSavedMealToLog(null);
   };
 
   const duplicateMealCard = (meal: SavedMeal) => {
@@ -1552,26 +1640,26 @@ export function NutritionDiaryScreen() {
   };
 
   const quickAddingMealId = quickAddSavedMealMutation.isPending ? quickAddSavedMealMutation.variables?.savedMealId : undefined;
-  const renamingMealId = renameSavedMealMutation.isPending ? renameSavedMealMutation.variables?.savedMealId : undefined;
+  const deletingDiaryEntryId = deleteDiaryEntryMutation.isPending ? deleteDiaryEntryMutation.variables?.entryId : undefined;
   const duplicatingMealId = duplicateSavedMealMutation.isPending ? duplicateSavedMealMutation.variables?.savedMeal.id : undefined;
   const deletingMealId = deleteSavedMealMutation.isPending ? deleteSavedMealMutation.variables?.savedMealId : undefined;
 
   const onHeaderAction = () => {
     if (tab === 'meals') {
-      Alert.alert('Meals', 'Custom meal builder can be opened from this action.');
+      navigation.navigate('CreateMeal');
       return;
     }
     if (tab === 'goals') {
       saveGoalSettings();
       return;
     }
-    navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' });
+    navigation.navigate('FoodSearch', { mealSlot: globalDefaultMealSlot, localDate: selectedDate, mode: 'food' });
   };
 
   const headerAction = tab === 'goals'
     ? { label: saveGoalSettingsMutation.isPending ? 'Saving...' : 'Save goals', icon: Target }
     : tab === 'meals'
-      ? { label: 'Add custom meal', icon: Plus }
+      ? { label: 'Create meal', icon: Plus }
       : { label: 'Add food', icon: Plus };
 
   if (diary.isLoading || profile.isLoading || nutritionLibrary.isLoading || recentFoods.isLoading || mealsPerDayTarget.isLoading) {
@@ -1618,24 +1706,52 @@ export function NutritionDiaryScreen() {
 
   const renderDiaryTab = () => (
     <View style={styles.diaryFlow}>
-      <CaloriesDashboardCard
+      <CompactNutritionSummary
         calories={calories}
         target={calorieTarget}
-        remaining={remainingCalories}
         progress={calorieProgress}
         protein={protein}
         carbs={carbs}
         fat={fat}
-        goals={goals}
-        feedback={calorieFeedback}
+        detailsExpanded={nutritionDetailsExpanded}
+        onToggleDetails={() => setNutritionDetailsExpanded((current) => !current)}
       />
 
-      <CalorieStreakBadge streak={calorieStreak.data ?? 0} isLoading={calorieStreak.isLoading} />
+      <MealNavRow active={activeDiaryMeal} sections={mealSections} onSelect={selectDiaryMeal} />
 
-      <WeeklyCaloriesCard points={weeklyCaloriesPoints} isLoading={weeklyCalories.isLoading} />
+      {savedMealPickerSlot ? (
+        <SavedMealPicker
+          mealSlot={savedMealPickerSlot}
+          savedMeals={meals}
+          foodsById={foodsById}
+          pendingMealId={quickAddingMealId}
+          onClose={() => setSavedMealPickerSlot(null)}
+          onSelect={(meal) => {
+            if (savedMealPickerSlot) {
+              addSavedMealToDiarySlot(meal, savedMealPickerSlot);
+            }
+          }}
+        />
+      ) : null}
+
+      {nutritionDetailsExpanded ? (
+        <DailyNutritionDetails
+          calories={calories}
+          target={calorieTarget}
+          remaining={remainingCalories}
+          progress={calorieProgress}
+          protein={protein}
+          carbs={carbs}
+          fat={fat}
+          goals={goals}
+          waterMl={diaryData.day.waterMl}
+          streak={calorieStreak.data ?? 0}
+          streakLoading={calorieStreak.isLoading}
+        />
+      ) : null}
 
       <View style={styles.mealCardsStack}>
-        {mealSections.map((section) => (
+        {visibleMealSections.map((section) => (
           <MealSummaryCard
             key={section.slot}
             label={section.label}
@@ -1651,26 +1767,15 @@ export function NutritionDiaryScreen() {
             onToggle={() => toggleMealSlot(section.slot)}
             onAddFood={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate, mode: 'food' })}
             onAddDrink={() => navigation.navigate('FoodSearch', { mealSlot: section.slot, localDate: selectedDate, mode: 'drink' })}
+            onAddSavedMeal={() => setSavedMealPickerSlot(section.slot)}
+            onSaveMeal={() => navigation.navigate('CreateMeal', { localDate: selectedDate, mealSlot: section.slot })}
             onQuickAddLastFood={() => quickAddLastMealFood(section.slot, section.entries, section.previousEntries)}
             onRepeatPreviousMeal={() => repeatMealFromYesterday(section.slot, section.previousEntries)}
+            onDeleteEntry={confirmDeleteMealEntry}
+            deletingEntryId={deletingDiaryEntryId}
           />
         ))}
       </View>
-
-      <NutritionButton label="Log meal" icon={Plus} onPress={() => navigation.navigate('FoodSearch', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' })} style={styles.primaryCta} />
-
-      <NutritionCard onPress={() => navigation.navigate('BarcodeScanner', { mealSlot: 'lunch', localDate: selectedDate, mode: 'food' })} style={styles.secondaryQuickAction}>
-        <View style={styles.quickActionCopy}>
-          <View style={[styles.barcodeIconWrap, { backgroundColor: theme.colors.surfaceAlt }]}>
-            <Barcode size={20} color={theme.colors.primary} />
-          </View>
-          <View>
-            <AppText weight="800">Barcode scanner</AppText>
-            <AppText muted>Quick add packaged food</AppText>
-          </View>
-        </View>
-        <ChevronRight size={20} color={theme.colors.muted} />
-      </NutritionCard>
     </View>
   );
 
@@ -1819,6 +1924,23 @@ export function NutritionDiaryScreen() {
         </AppText>
       </View>
 
+      <NutritionButton
+        label="Create meal"
+        icon={Plus}
+        variant="soft"
+        onPress={() => navigation.navigate('CreateMeal')}
+        style={styles.createMealButton}
+      />
+
+      {savedMealToLog ? (
+        <SavedMealSlotPicker
+          meal={savedMealToLog}
+          pending={quickAddSavedMealMutation.isPending}
+          onClose={() => setSavedMealToLog(null)}
+          onSelectSlot={(slot) => addSavedMealToDiarySlot(savedMealToLog, slot)}
+        />
+      ) : null}
+
       {mealCards.length ? (
         mealCards.map(({ meal, icon: Icon, totals, ingredients }) => (
           <SavedMealCard
@@ -1828,12 +1950,11 @@ export function NutritionDiaryScreen() {
             totals={totals}
             ingredients={ingredients}
             recentlyAdded={recentlyAddedSavedMealId === meal.id}
-            quickAddPending={quickAddingMealId === meal.id}
-            editPending={renamingMealId === meal.id}
+            addPending={quickAddingMealId === meal.id}
             duplicatePending={duplicatingMealId === meal.id}
             deletePending={deletingMealId === meal.id}
-            onQuickAdd={() => quickAddSavedMeal(meal)}
-            onEdit={() => promptRenameSavedMeal(meal)}
+            onOpen={() => openSavedMealDetails(meal)}
+            onAddToMeal={() => openSavedMealSlotPicker(meal)}
             onDuplicate={() => duplicateMealCard(meal)}
             onDelete={() => confirmDeleteSavedMeal(meal)}
           />
@@ -2176,201 +2297,188 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   diaryFlow: {
-    gap: 18,
+    gap: 12,
   },
-  caloriesDashboardCard: {
-    gap: 18,
-    padding: 16,
-    position: 'relative',
-  },
-  calorieStreakBadge: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    gap: 6,
-    minHeight: 30,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  calorieStreakLabel: {
-    fontSize: 11,
-    letterSpacing: 0.1,
-  },
-  weeklyCaloriesCard: {
-    gap: 8,
+  compactSummaryCard: {
+    gap: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  weeklyCaloriesHeader: {
+  compactSummaryTop: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: 12,
     justifyContent: 'space-between',
   },
-  weeklyCaloriesChart: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    gap: 8,
-    minHeight: 68,
-  },
-  weeklyCaloriesBarItem: {
-    alignItems: 'center',
+  compactCaloriesBlock: {
     flex: 1,
-    gap: 4,
+    minWidth: 0,
   },
-  weeklyCaloriesBarTrack: {
-    borderRadius: 999,
-    height: 52,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-    width: 8,
-  },
-  weeklyCaloriesBarFill: {
-    borderRadius: 999,
-    width: '100%',
-  },
-  weeklyCaloriesLabel: {
-    fontSize: 10,
-    opacity: 0.78,
-  },
-  calorieHero: {
-    alignItems: 'center',
-    height: 254,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  calorieHeroRing: {
-    height: 264,
-    left: '50%',
-    marginLeft: -132,
-    opacity: 0.92,
-    position: 'absolute',
-    top: -2,
-    width: 264,
-  },
-  calorieHeroCenter: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 190,
-    paddingHorizontal: 16,
-  },
-  calorieFeedbackBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    position: 'absolute',
-    top: 8,
-  },
-  calorieHeroLabel: {
-    fontSize: 12,
-    letterSpacing: 0.4,
-    marginBottom: 6,
+  compactSummaryLabel: {
+    letterSpacing: 0.2,
     textTransform: 'uppercase',
   },
-  calorieHeroValueRow: {
+  compactCaloriesRow: {
     alignItems: 'flex-end',
     flexDirection: 'row',
-    gap: 8,
+    gap: 5,
   },
-  calorieHeroValue: {
-    fontSize: 58,
+  compactCaloriesValue: {
+    fontSize: 27,
     fontWeight: '800',
-    lineHeight: 64,
+    lineHeight: 32,
   },
-  calorieHeroUnit: {
-    fontSize: 19,
-    fontWeight: '800',
-    lineHeight: 28,
-    marginBottom: 8,
+  compactCaloriesUnit: {
+    fontSize: 13,
+    lineHeight: 21,
+    marginBottom: 2,
   },
-  calorieHeroLeft: {
-    fontSize: 18,
-    lineHeight: 24,
-    marginTop: 6,
-  },
-  calorieHeroTarget: {
-    marginTop: 4,
-  },
-  macroDashboardRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  macroDashboardItem: {
-    flex: 1,
-    borderRadius: 12,
-    gap: 10,
-    justifyContent: 'space-between',
-    minHeight: 112,
-    minWidth: 0,
-    overflow: 'hidden',
-    padding: 10,
-    position: 'relative',
-  },
-  macroDashboardGlow: {
-    borderRadius: 50,
-    height: 72,
-    opacity: 0.1,
-    position: 'absolute',
-    right: -32,
-    top: -28,
-    width: 72,
-  },
-  macroDashboardAccent: {
-    height: 3,
-    left: 0,
-    opacity: 0.85,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  macroDashboardTop: {
+  compactDetailsButton: {
     alignItems: 'center',
+    borderRadius: 999,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 5,
+    minHeight: 34,
+    paddingHorizontal: 10,
   },
-  macroDashboardLabelRow: {
-    alignItems: 'center',
-    flexShrink: 1,
-    flexDirection: 'row',
-    gap: 6,
-    minWidth: 0,
-  },
-  macroDashboardDot: {
+  compactSummaryTrack: {
+    backgroundColor: 'rgba(31,39,48,0.78)',
     borderRadius: 999,
-    height: 7,
-    width: 7,
-  },
-  macroPercentPill: {
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  macroDashboardValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    lineHeight: 27,
-  },
-  thinProgressTrack: {
-    borderRadius: 999,
-    height: 6,
+    height: 5,
     overflow: 'hidden',
   },
-  thinProgressFill: {
+  compactSummaryFill: {
     borderRadius: 999,
     height: '100%',
   },
+  compactMacroRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  compactMacroStat: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(31,39,48,0.38)',
+    borderRadius: 8,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 5,
+    minHeight: 32,
+    minWidth: 0,
+    paddingHorizontal: 8,
+  },
+  compactMacroDot: {
+    borderRadius: 999,
+    height: 6,
+    width: 6,
+  },
+  mealNavRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  mealNavChip: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'center',
+    minHeight: 36,
+    minWidth: 0,
+    paddingHorizontal: 6,
+  },
+  dailyDetailsCard: {
+    gap: 12,
+    padding: 14,
+  },
+  dailyDetailsHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  detailsProgressBlock: {
+    gap: 6,
+  },
+  detailsProgressLabels: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  detailProgressTrack: {
+    borderRadius: 999,
+    height: 7,
+    overflow: 'hidden',
+  },
+  detailProgressFill: {
+    borderRadius: 999,
+    height: '100%',
+  },
+  detailMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  detailMetric: {
+    backgroundColor: 'rgba(31,39,48,0.38)',
+    borderRadius: 8,
+    flexBasis: '48%',
+    flexGrow: 1,
+    gap: 3,
+    minHeight: 58,
+    padding: 9,
+  },
+  detailMetricDot: {
+    borderRadius: 999,
+    height: 6,
+    width: 6,
+  },
+  streakInline: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 32,
+    paddingHorizontal: 10,
+  },
+  savedMealPickerCard: {
+    gap: 10,
+    padding: 14,
+  },
+  savedMealPickerHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  savedMealPickerRow: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(31,39,48,0.38)',
+    borderRadius: 10,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    minHeight: 58,
+    paddingHorizontal: 10,
+  },
+  savedMealPickerCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  savedMealPickerEmpty: {
+    backgroundColor: 'rgba(31,39,48,0.28)',
+    borderRadius: 10,
+    padding: 12,
+  },
   mealCardsStack: {
-    gap: 22,
-    marginTop: 12,
+    gap: 12,
   },
   mealSummaryCard: {
     borderRadius: 12,
-    gap: 12,
-    minHeight: 96,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    gap: 10,
+    minHeight: 86,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     position: 'relative',
   },
   mealSwipeAction: {
@@ -2393,26 +2501,24 @@ const styles = StyleSheet.create({
   mealSwipePrimaryText: {
     color: '#06100B',
   },
-  mealCardGlow: {
-    borderRadius: 80,
-    height: 120,
-    opacity: 0.07,
-    position: 'absolute',
-    right: -48,
-    top: -44,
-    width: 120,
-  },
-  mealSummaryMain: {
+  mealSummaryTopRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
+  },
+  mealSummaryToggle: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 0,
   },
   mealSummaryIcon: {
     alignItems: 'center',
     borderRadius: 8,
-    height: 48,
+    height: 42,
     justifyContent: 'center',
-    width: 48,
+    width: 42,
   },
   mealSummaryCopy: {
     flex: 1,
@@ -2429,12 +2535,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
   },
+  mealSummaryAddButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(10,14,18,0.22)',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: 9,
+  },
   mealLastFood: {
     marginTop: 2,
   },
   mealProgressTrack: {
     borderRadius: 999,
-    height: 7,
+    height: 5,
     overflow: 'hidden',
     width: '100%',
   },
@@ -2466,6 +2582,19 @@ const styles = StyleSheet.create({
     gap: 2,
     minWidth: 0,
   },
+  mealFoodTrail: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  mealFoodDeleteButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(242,95,92,0.12)',
+    borderRadius: 8,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
   mealEmptyRow: {
     backgroundColor: 'rgba(10,14,18,0.16)',
     borderRadius: 10,
@@ -2489,26 +2618,6 @@ const styles = StyleSheet.create({
   },
   primaryCta: {
     minHeight: 56,
-  },
-  secondaryQuickAction: {
-    alignItems: 'center',
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    minHeight: 64,
-    paddingHorizontal: 14,
-  },
-  quickActionCopy: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-  },
-  barcodeIconWrap: {
-    alignItems: 'center',
-    borderRadius: 8,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
   },
   searchRow: {
     flexDirection: 'row',
@@ -2615,6 +2724,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 22,
   },
+  createMealButton: {
+    minHeight: 50,
+  },
   savedMealCard: {
     gap: 0,
   },
@@ -2664,6 +2776,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  savedMealMainTouch: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 0,
+  },
   savedMealThumb: {
     alignItems: 'center',
     borderRadius: 10,
@@ -2691,7 +2810,47 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 8,
     justifyContent: 'center',
-    minWidth: 68,
+    minWidth: 92,
+  },
+  savedMealAddButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 5,
+    minHeight: 30,
+    minWidth: 70,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  savedMealSlotPickerCard: {
+    gap: 10,
+    padding: 14,
+  },
+  savedMealSlotPickerHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  savedMealSlotPickerCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  savedMealSlotPickerOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  savedMealSlotPickerOption: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 38,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   savedMacroRow: {
     alignItems: 'center',

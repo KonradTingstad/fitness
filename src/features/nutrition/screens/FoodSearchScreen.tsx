@@ -73,7 +73,7 @@ export function FoodSearchScreen() {
       </View>
 
       <View style={styles.quick}>
-        <NutritionButton label={`Custom ${modeLabel}`} icon={Plus} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} style={styles.quickButton} />
+        <NutritionButton label={`Create ${modeLabel}`} icon={Plus} variant="soft" onPress={() => navigation.navigate('CustomFood', route.params)} style={styles.quickButton} />
         <NutritionButton label="Barcode" icon={Barcode} variant="soft" onPress={() => navigation.navigate('BarcodeScanner', route.params)} style={styles.quickButton} />
       </View>
 
@@ -94,8 +94,8 @@ export function FoodSearchScreen() {
         <EmptyState
           icon={Search}
           title={`No ${modeLabel} found`}
-          body={`Try a broader search, add a custom ${modeLabel}, or scan a barcode when a provider is configured.`}
-          actionLabel={`Add custom ${modeLabel}`}
+          body={`Try a broader search, create a ${modeLabel} manually, or scan a barcode when a provider is configured.`}
+          actionLabel={`Create ${modeLabel}`}
           onAction={() => navigation.navigate('CustomFood', route.params)}
         />
       )}

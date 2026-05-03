@@ -32,6 +32,16 @@ const savedMealItemColumns: ReadonlyArray<{ name: string; definition: string }> 
 
 const foodItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
   { name: 'item_type', definition: "TEXT NOT NULL DEFAULT 'food'" },
+  { name: 'caffeine_mg_per_can', definition: 'REAL' },
+  { name: 'kj_per_100', definition: 'REAL' },
+  { name: 'calories_per_100', definition: 'REAL' },
+  { name: 'protein_per_100', definition: 'REAL' },
+  { name: 'carbs_per_100', definition: 'REAL' },
+  { name: 'sugar_per_100', definition: 'REAL' },
+  { name: 'fat_per_100', definition: 'REAL' },
+  { name: 'saturated_fat_per_100', definition: 'REAL' },
+  { name: 'fiber_per_100', definition: 'REAL' },
+  { name: 'salt_per_100', definition: 'REAL' },
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
@@ -428,6 +438,16 @@ CREATE TABLE IF NOT EXISTS food_items (
   sugar_g REAL,
   saturated_fat_g REAL,
   sodium_mg REAL,
+  caffeine_mg_per_can REAL,
+  kj_per_100 REAL,
+  calories_per_100 REAL,
+  protein_per_100 REAL,
+  carbs_per_100 REAL,
+  sugar_per_100 REAL,
+  fat_per_100 REAL,
+  saturated_fat_per_100 REAL,
+  fiber_per_100 REAL,
+  salt_per_100 REAL,
   barcode TEXT,
   source_provider TEXT NOT NULL,
   is_verified INTEGER NOT NULL DEFAULT 0,

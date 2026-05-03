@@ -35,6 +35,16 @@ type FoodRow = {
   sugar_g: number | null;
   saturated_fat_g: number | null;
   sodium_mg: number | null;
+  caffeine_mg_per_can: number | null;
+  kj_per_100: number | null;
+  calories_per_100: number | null;
+  protein_per_100: number | null;
+  carbs_per_100: number | null;
+  sugar_per_100: number | null;
+  fat_per_100: number | null;
+  saturated_fat_per_100: number | null;
+  fiber_per_100: number | null;
+  salt_per_100: number | null;
   barcode: string | null;
   source_provider: FoodItem['sourceProvider'] | string;
   is_verified: number | boolean;
@@ -57,6 +67,16 @@ type SupabaseFoodSearchRow = {
   sugar_g?: number | null;
   saturated_fat_g?: number | null;
   sodium_mg: number | null;
+  caffeine_mg_per_can?: number | null;
+  kj_per_100?: number | null;
+  calories_per_100?: number | null;
+  protein_per_100?: number | null;
+  carbs_per_100?: number | null;
+  sugar_per_100?: number | null;
+  fat_per_100?: number | null;
+  saturated_fat_per_100?: number | null;
+  fiber_per_100?: number | null;
+  salt_per_100?: number | null;
   barcode?: string | null;
   source_provider: string | null;
   is_verified: boolean;
@@ -135,7 +155,7 @@ export type SavedMealItemInput = {
 const CALORIE_STREAK_LOOKBACK_DAYS = 90;
 
 const SUPABASE_SEARCH_SELECT_EXTENDED =
-  'id, name, brand_name, item_type, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom';
+  'id, name, brand_name, item_type, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom';
 const SUPABASE_SEARCH_SELECT_LEGACY =
   'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg, source_provider, is_verified, is_custom';
 
@@ -152,6 +172,57 @@ function normalizeFoodItemType(value: unknown): FoodItemType {
 
 function matchesFoodItemType(itemType: FoodItemType, filter: FoodSearchItemType): boolean {
   return filter === 'all' ? true : itemType === filter;
+}
+
+function roundTo(value: number, decimals = 3): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function derivePer100(value: number | null | undefined, gramsPerServing: number): number | null {
+  if (!Number.isFinite(value) || value == null) {
+    return null;
+  }
+  if (!Number.isFinite(gramsPerServing) || gramsPerServing <= 0) {
+    return null;
+  }
+  return roundTo((value * 100) / gramsPerServing, 3);
+}
+
+function deriveCustomFoodExtendedNutrition(form: CustomFoodForm): {
+  kjPer100: number | null;
+  caloriesPer100: number | null;
+  proteinPer100: number | null;
+  carbsPer100: number | null;
+  sugarPer100: number | null;
+  fatPer100: number | null;
+  saturatedFatPer100: number | null;
+  fiberPer100: number | null;
+  saltPer100: number | null;
+} {
+  const gramsPerServing = Number.isFinite(form.gramsPerServing) && form.gramsPerServing > 0 ? form.gramsPerServing : 100;
+  const caloriesPer100 = derivePer100(form.calories, gramsPerServing);
+  const proteinPer100 = derivePer100(form.proteinG, gramsPerServing);
+  const carbsPer100 = derivePer100(form.carbsG, gramsPerServing);
+  const sugarPer100 = derivePer100(form.sugarG, gramsPerServing);
+  const fatPer100 = derivePer100(form.fatG, gramsPerServing);
+  const saturatedFatPer100 = derivePer100(form.saturatedFatG, gramsPerServing);
+  const fiberPer100 = derivePer100(form.fiberG, gramsPerServing);
+  const sodiumPer100 = derivePer100(form.sodiumMg, gramsPerServing);
+  const saltPer100 = sodiumPer100 == null ? null : roundTo(sodiumPer100 / 400, 4);
+  const kjPer100 = caloriesPer100 == null ? null : roundTo(caloriesPer100 * 4.184, 3);
+
+  return {
+    kjPer100,
+    caloriesPer100,
+    proteinPer100,
+    carbsPer100,
+    sugarPer100,
+    fatPer100,
+    saturatedFatPer100,
+    fiberPer100,
+    saltPer100,
+  };
 }
 
 export async function getDiary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<DiarySummary> {
@@ -462,10 +533,11 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
   const id = createId('food');
   const customId = createId('custom_food');
   const now = new Date().toISOString();
+  const derived = deriveCustomFoodExtendedNutrition(form);
   await db.runAsync(
     `INSERT INTO food_items
-    (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       userId,
@@ -481,10 +553,20 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
       form.carbsG,
       form.fatG,
       form.fiberG ?? null,
-      null,
-      null,
+      form.sugarG ?? null,
+      form.saturatedFatG ?? null,
       form.sodiumMg ?? null,
-      null,
+      form.caffeineMgPerCan ?? null,
+      derived.kjPer100,
+      derived.caloriesPer100,
+      derived.proteinPer100,
+      derived.carbsPer100,
+      derived.sugarPer100,
+      derived.fatPer100,
+      derived.saturatedFatPer100,
+      derived.fiberPer100,
+      derived.saltPer100,
+      form.barcode ?? null,
       'custom',
       1,
       1,
@@ -501,7 +583,7 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [customId, userId, id, now, now, null, 'pending', 1],
   );
-  await enqueueSync('food_item', id, 'insert', { ...form, itemType });
+  await enqueueSync('food_item', id, 'insert', { ...form, itemType, ...derived });
   return id;
 }
 
@@ -1164,8 +1246,8 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
 
     await db.runAsync(
       `INSERT INTO food_items
-      (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         user_id = excluded.user_id,
         brand_id = excluded.brand_id,
@@ -1183,6 +1265,16 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         sugar_g = excluded.sugar_g,
         saturated_fat_g = excluded.saturated_fat_g,
         sodium_mg = excluded.sodium_mg,
+        caffeine_mg_per_can = excluded.caffeine_mg_per_can,
+        kj_per_100 = excluded.kj_per_100,
+        calories_per_100 = excluded.calories_per_100,
+        protein_per_100 = excluded.protein_per_100,
+        carbs_per_100 = excluded.carbs_per_100,
+        sugar_per_100 = excluded.sugar_per_100,
+        fat_per_100 = excluded.fat_per_100,
+        saturated_fat_per_100 = excluded.saturated_fat_per_100,
+        fiber_per_100 = excluded.fiber_per_100,
+        salt_per_100 = excluded.salt_per_100,
         barcode = excluded.barcode,
         source_provider = excluded.source_provider,
         is_verified = excluded.is_verified,
@@ -1208,6 +1300,16 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         food.sugarG ?? null,
         food.saturatedFatG ?? null,
         food.sodiumMg ?? null,
+        food.caffeineMgPerCan ?? null,
+        food.kjPer100 ?? null,
+        food.caloriesPer100 ?? null,
+        food.proteinPer100 ?? null,
+        food.carbsPer100 ?? null,
+        food.sugarPer100 ?? null,
+        food.fatPer100 ?? null,
+        food.saturatedFatPer100 ?? null,
+        food.fiberPer100 ?? null,
+        food.saltPer100 ?? null,
         food.barcode ?? null,
         food.sourceProvider,
         food.isVerified ? 1 : 0,
@@ -1254,6 +1356,16 @@ function mapSupabaseSearchFood(row: SupabaseFoodSearchRow): FoodItem {
     sugar_g: row.sugar_g ?? null,
     saturated_fat_g: row.saturated_fat_g ?? null,
     sodium_mg: row.sodium_mg,
+    caffeine_mg_per_can: row.caffeine_mg_per_can ?? null,
+    kj_per_100: row.kj_per_100 ?? null,
+    calories_per_100: row.calories_per_100 ?? null,
+    protein_per_100: row.protein_per_100 ?? null,
+    carbs_per_100: row.carbs_per_100 ?? null,
+    sugar_per_100: row.sugar_per_100 ?? null,
+    fat_per_100: row.fat_per_100 ?? null,
+    saturated_fat_per_100: row.saturated_fat_per_100 ?? null,
+    fiber_per_100: row.fiber_per_100 ?? null,
+    salt_per_100: row.salt_per_100 ?? null,
     barcode: row.barcode ?? null,
     source_provider: row.source_provider ?? 'search',
     is_verified: row.is_verified,
@@ -1293,6 +1405,16 @@ function mapFood(row: FoodRow): FoodItem {
     sugarG: row.sugar_g,
     saturatedFatG: row.saturated_fat_g,
     sodiumMg: row.sodium_mg,
+    caffeineMgPerCan: row.caffeine_mg_per_can,
+    kjPer100: row.kj_per_100,
+    caloriesPer100: row.calories_per_100,
+    proteinPer100: row.protein_per_100,
+    carbsPer100: row.carbs_per_100,
+    sugarPer100: row.sugar_per_100,
+    fatPer100: row.fat_per_100,
+    saturatedFatPer100: row.saturated_fat_per_100,
+    fiberPer100: row.fiber_per_100,
+    saltPer100: row.salt_per_100,
     barcode: row.barcode,
     sourceProvider: normalizeFoodSourceProvider(String(row.source_provider ?? 'search')),
     isVerified: Boolean(row.is_verified),

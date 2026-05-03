@@ -1,17 +1,63 @@
 import { z } from 'zod';
 
+function parseNumberInput(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.length) {
+    return undefined;
+  }
+  const normalized = trimmed.replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
+function requiredNumberField(label: string) {
+  return z.preprocess(
+    parseNumberInput,
+    z.number().min(0, `${label} must be 0 or greater`),
+  );
+}
+
+function positiveRequiredNumberField(label: string) {
+  return z.preprocess(
+    parseNumberInput,
+    z.number().positive(`${label} must be greater than 0`),
+  );
+}
+
+function optionalNumberField(label: string) {
+  return z.preprocess(
+    parseNumberInput,
+    z.number().min(0, `${label} must be 0 or greater`).optional(),
+  );
+}
+
 export const customFoodSchema = z.object({
-  name: z.string().min(2),
-  brandName: z.string().optional(),
-  servingSize: z.coerce.number().positive(),
-  servingUnit: z.string().min(1),
-  gramsPerServing: z.coerce.number().positive(),
-  calories: z.coerce.number().min(0),
-  proteinG: z.coerce.number().min(0),
-  carbsG: z.coerce.number().min(0),
-  fatG: z.coerce.number().min(0),
-  fiberG: z.coerce.number().min(0).optional(),
-  sodiumMg: z.coerce.number().min(0).optional(),
+  name: z.string().trim().min(2, 'Name must be at least 2 characters'),
+  brandName: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length ? value : undefined)),
+  servingSize: positiveRequiredNumberField('Serving size'),
+  servingUnit: z.string().trim().min(1, 'Serving unit is required'),
+  gramsPerServing: positiveRequiredNumberField('Grams per serving'),
+  calories: requiredNumberField('Calories'),
+  proteinG: requiredNumberField('Protein'),
+  carbsG: requiredNumberField('Carbs'),
+  fatG: requiredNumberField('Fat'),
+  fiberG: optionalNumberField('Fiber'),
+  sugarG: optionalNumberField('Sugar'),
+  saturatedFatG: optionalNumberField('Saturated fat'),
+  sodiumMg: optionalNumberField('Sodium'),
+  caffeineMgPerCan: optionalNumberField('Caffeine (mg per can)'),
+  barcode: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length ? value : undefined)),
 });
 
 export const onboardingSchema = z.object({

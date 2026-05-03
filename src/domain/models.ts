@@ -195,6 +195,16 @@ export interface FoodItem {
   sugarG?: number | null;
   saturatedFatG?: number | null;
   sodiumMg?: number | null;
+  caffeineMgPerCan?: number | null;
+  kjPer100?: number | null;
+  caloriesPer100?: number | null;
+  proteinPer100?: number | null;
+  carbsPer100?: number | null;
+  sugarPer100?: number | null;
+  fatPer100?: number | null;
+  saturatedFatPer100?: number | null;
+  fiberPer100?: number | null;
+  saltPer100?: number | null;
   barcode?: string | null;
   sourceProvider: 'seed' | 'custom' | 'barcode' | 'search' | 'oda_private_snapshot';
   isVerified: boolean;

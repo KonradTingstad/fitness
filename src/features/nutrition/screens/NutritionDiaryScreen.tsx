@@ -1804,6 +1804,13 @@ export function NutritionDiaryScreen() {
         </Pressable>
       </View>
 
+      <NutritionButton
+        label="Create food manually"
+        icon={Plus}
+        variant="soft"
+        onPress={() => navigation.navigate('CustomFood', { mealSlot: activeSearchMealSlot, localDate: selectedDate, mode: 'food' })}
+      />
+
       <View style={styles.chipsRow}>
         {SEARCH_FILTERS.map((chip) => {
           const active = chip === searchFilter;

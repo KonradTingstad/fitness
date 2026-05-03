@@ -93,8 +93,10 @@ export function FoodEntryDetailsScreen() {
       sugar: food.sugarG == null ? null : roundTo(Math.max(0, food.sugarG) * servings),
       saturatedFat: food.saturatedFatG == null ? null : roundTo(Math.max(0, food.saturatedFatG) * servings),
       sodiumMg: food.sodiumMg == null ? null : roundTo(Math.max(0, food.sodiumMg) * servings),
+      caffeineMg: food.caffeineMgPerCan == null ? null : roundTo(Math.max(0, food.caffeineMgPerCan) * servings),
+      saltG: food.saltPer100 == null ? null : roundTo((Math.max(0, food.saltPer100) * totalGrams) / 100),
     };
-  }, [food.calories, food.proteinG, food.carbsG, food.fatG, food.fiberG, food.sugarG, food.saturatedFatG, food.sodiumMg, gramsPerServing, mode, parsedServings, parsedGrams]);
+  }, [food.calories, food.proteinG, food.carbsG, food.fatG, food.fiberG, food.sugarG, food.saturatedFatG, food.sodiumMg, food.caffeineMgPerCan, food.saltPer100, gramsPerServing, mode, parsedServings, parsedGrams]);
 
   const optionalRows = useMemo(
     () => [
@@ -102,8 +104,10 @@ export function FoodEntryDetailsScreen() {
       { key: 'sugar', label: 'Sugar', value: totals?.sugar, unit: 'g' },
       { key: 'saturatedFat', label: 'Saturated fat', value: totals?.saturatedFat, unit: 'g' },
       { key: 'sodium', label: 'Sodium', value: totals?.sodiumMg, unit: 'mg' },
+      { key: 'salt', label: 'Salt', value: totals?.saltG, unit: 'g' },
+      { key: 'caffeine', label: 'Caffeine', value: totals?.caffeineMg, unit: 'mg' },
     ].filter((item) => item.value != null),
-    [totals?.fiber, totals?.sugar, totals?.saturatedFat, totals?.sodiumMg],
+    [totals?.fiber, totals?.sugar, totals?.saturatedFat, totals?.sodiumMg, totals?.saltG, totals?.caffeineMg],
   );
 
   const addFood = useMutation({

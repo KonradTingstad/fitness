@@ -16,7 +16,7 @@ export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<BottomTabParamList>;
   ProfileSettings: undefined;
   LiveWorkout: { sessionId: string };
-  WorkoutSummary: { sessionId: string };
+  WorkoutSummary: { sessionId: string; startInEdit?: boolean };
   ExerciseHistory: { exerciseId: string };
   TemplateBuilder: { groupId?: string; groupName?: string; routineId?: string } | undefined;
   EditProgram: { initialLocalDate?: string } | undefined;

@@ -15,6 +15,9 @@ const OPTIONS: Array<{ type: SetType; label: string; description: string; accent
   { type: 'warmup', label: 'Warm up', description: 'Prep set before work sets', accent: 'warmup' },
   { type: 'drop', label: 'Drop set', description: 'Reduce load and continue', accent: 'drop' },
   { type: 'failure', label: 'Failure', description: 'Set taken to failure', accent: 'failure' },
+  { type: 'assisted', label: 'Assisted', description: 'Assistance-supported set', accent: 'normal' },
+  { type: 'bodyweight', label: 'Bodyweight', description: 'No external load', accent: 'normal' },
+  { type: 'timed', label: 'Timed', description: 'Duration-focused set', accent: 'normal' },
 ];
 
 export function SetTypeMenu({ visible, onClose, onSelect }: Props) {

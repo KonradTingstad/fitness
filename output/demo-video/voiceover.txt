@@ -1,0 +1,17 @@
+Hei, og velkommen til FormFuel. Her samler du trening, kosthold og fremdrift i én enkel flyt.
+
+På Home ser du status med én gang: kalorier, makrofordeling, vanninntak og treningsplanen for i dag.
+
+I Workouts kan du planlegge uka, starte en økt og følge framgang per øvelse og økt.
+
+Live Workout gir rask logging mens du trener, og avsluttes med en tydelig oppsummering av økta.
+
+Nutrition-flyten er laget for fart: finn mat raskt, logg til riktig måltid og bygg egne favoritter.
+
+Progress viser tydelige trender over tid, så du ser hva som faktisk fungerer for deg.
+
+Du kan også bruke hurtigvalg for å starte tom økt, logge måltid og bygge vaner uten å forlate hovedskjermene.
+
+Alle dataene dine ligger lokalt som standard, med valgfri sync når du ønsker det.
+
+Til slutt finner du mål, enheter og sync i Profile. Dette er FormFuel på omtrent ett minutt.

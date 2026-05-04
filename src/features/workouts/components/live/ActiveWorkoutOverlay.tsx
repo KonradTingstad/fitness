@@ -1,13 +1,15 @@
 import { useEffect, useMemo } from 'react';
+import { useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useActiveWorkout } from '@/hooks/useAppQueries';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { LiveWorkoutSheet } from '@/features/workouts/components/live/LiveWorkoutSheet';
-import { FLOATING_TAB_BAR_HEIGHT, getFloatingTabBarBottomOffset } from '@/navigation/tabBarMetrics';
+import { getMiniWorkoutBottomOffset, getMiniWorkoutHorizontalInset } from '@/navigation/tabBarMetrics';
 
 export function ActiveWorkoutOverlay() {
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
   const activeWorkout = useActiveWorkout();
   const setSessionId = useLiveWorkoutOverlayStore((state) => state.setSessionId);
   const setActiveWorkout = useLiveWorkoutOverlayStore((state) => state.setActiveWorkout);
@@ -32,8 +34,8 @@ export function ActiveWorkoutOverlay() {
     return null;
   }
 
-  const floatingBottom = getFloatingTabBarBottomOffset(insets.bottom);
-  const miniBottom = floatingBottom + FLOATING_TAB_BAR_HEIGHT;
+  const miniBottom = getMiniWorkoutBottomOffset(insets.bottom);
+  const miniHorizontalInset = getMiniWorkoutHorizontalInset(screenWidth);
 
   return (
     <LiveWorkoutSheet
@@ -41,6 +43,7 @@ export function ActiveWorkoutOverlay() {
       expanded={expanded}
       bottomInset={insets.bottom}
       miniBottom={miniBottom}
+      miniHorizontalInset={miniHorizontalInset}
       onExpand={() => open(session.id)}
       onMinimize={minimize}
     />

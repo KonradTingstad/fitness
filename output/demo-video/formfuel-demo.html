@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FormFuel Demo</title>
+    <style>
+      :root {
+        --bg-1: #06111f;
+        --bg-2: #0b2230;
+        --bg-3: #12374b;
+        --text: #eef7ff;
+        --muted: #9fc3d7;
+        --primary: #2fe6a4;
+        --accent: #44b0ff;
+        --card: rgba(9, 22, 35, 0.66);
+        --border: rgba(104, 162, 194, 0.34);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 900px at 15% 18%, #1f5f7d 0%, transparent 55%),
+          radial-gradient(1100px 800px at 82% 84%, #164f5d 0%, transparent 58%),
+          linear-gradient(150deg, var(--bg-1), var(--bg-2) 48%, var(--bg-3));
+        overflow: hidden;
+      }
+
+      .grain {
+        position: fixed;
+        inset: 0;
+        opacity: 0.06;
+        background-image: radial-gradient(#ffffff 0.6px, transparent 0.6px);
+        background-size: 3px 3px;
+        pointer-events: none;
+      }
+
+      .frame {
+        position: relative;
+        width: 720px;
+        height: 1280px;
+        border-radius: 58px;
+        background: linear-gradient(175deg, rgba(16, 36, 54, 0.94), rgba(6, 13, 20, 0.97));
+        border: 1px solid rgba(111, 176, 212, 0.32);
+        box-shadow: 0 40px 120px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        overflow: hidden;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 56px 48px 28px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 14px;
+        object-fit: cover;
+        box-shadow: 0 8px 20px rgba(7, 0, 20, 0.38);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 34px;
+        letter-spacing: 0.2px;
+      }
+
+      .timer {
+        font-size: 22px;
+        color: var(--muted);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .progress-track {
+        margin: 0 48px;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+
+      .progress {
+        width: 0%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #29d89a 0%, #44b0ff 100%);
+        transition: width 260ms linear;
+      }
+
+      .content {
+        padding: 42px 48px 18px;
+      }
+
+      .kicker {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--primary);
+        letter-spacing: 1.4px;
+        text-transform: uppercase;
+      }
+
+      .title {
+        margin: 14px 0 8px;
+        font-size: 54px;
+        line-height: 1.05;
+      }
+
+      .subtitle {
+        margin: 0 0 28px;
+        font-size: 25px;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      .panel {
+        min-height: 560px;
+        border-radius: 34px;
+        padding: 34px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        backdrop-filter: blur(8px);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+        transition: transform 400ms ease, opacity 400ms ease;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .chip {
+        border-radius: 18px;
+        padding: 14px 16px;
+        font-size: 20px;
+        line-height: 1.24;
+        color: #d8ebf8;
+        background: rgba(61, 118, 147, 0.28);
+        border: 1px solid rgba(107, 166, 200, 0.32);
+      }
+
+      .chip strong {
+        display: block;
+        color: #ffffff;
+        margin-bottom: 4px;
+        font-size: 22px;
+      }
+
+      .caption {
+        position: absolute;
+        left: 36px;
+        right: 36px;
+        bottom: 44px;
+        min-height: 126px;
+        border-radius: 22px;
+        padding: 20px 24px;
+        background: rgba(3, 10, 16, 0.8);
+        border: 1px solid rgba(94, 156, 193, 0.34);
+        color: #f1f7fd;
+        font-size: 26px;
+        line-height: 1.35;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38);
+      }
+
+      .fade {
+        animation: fadeIn 420ms ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="grain"></div>
+    <main class="frame">
+      <header class="header">
+        <div class="brand">
+          <img class="logo" src="../../assets/icon.png" alt="FormFuel" />
+          <h1>FormFuel</h1>
+        </div>
+        <div class="timer" id="timer">00:00</div>
+      </header>
+      <div class="progress-track"><div class="progress" id="progress"></div></div>
+      <section class="content">
+        <p class="kicker" id="kicker"></p>
+        <h2 class="title" id="title"></h2>
+        <p class="subtitle" id="subtitle"></p>
+        <article class="panel fade" id="panel"></article>
+      </section>
+      <aside class="caption fade" id="caption"></aside>
+    </main>
+
+    <script>
+      const totalDurationMs = 60000;
+      const slides = [
+        {
+          until: 8000,
+          kicker: "INTRO",
+          title: "Én app for hele reisen",
+          subtitle: "Trening, kosthold og progresjon samlet i en lokal-first opplevelse.",
+          panel: [
+            ["Offline-first", "All logging fungerer lokalt"],
+            ["Rask flyt", "Færre trykk for daglige vaner"],
+            ["Personlig", "Mål, favoritter og egne statistikker"],
+            ["Bygget for kontinuitet", "Daglig plan + historikk i samme loop"],
+          ],
+          caption: "Hei, og velkommen til FormFuel. Her samler du trening, kosthold og fremdrift i én enkel flyt.",
+        },
+        {
+          until: 17000,
+          kicker: "HOME",
+          title: "Daglig dashboard",
+          subtitle: "Få oversikt over dagen med kalorier, makroer, vann og dagens plan.",
+          panel: [
+            ["Kalorier", "Forbrukt vs. mål"],
+            ["Makroer", "Protein, carbs og fett"],
+            ["Hydration", "Quick add: +250 ml"],
+            ["Today plan", "Start økt eller se oppsummering"],
+          ],
+          caption: "På Home ser du status med én gang: kalorier, makrofordeling, vanninntak og treningsplanen for i dag.",
+        },
+        {
+          until: 28500,
+          kicker: "WORKOUTS",
+          title: "Planlegg og logg",
+          subtitle: "Workouts har Today, Program, History og Exercises i én sammenhengende flyt.",
+          panel: [
+            ["Today", "Dagens økt, streak og ukeoversikt"],
+            ["Program", "Ukeplan med styrke/cardio/rest"],
+            ["History", "Kalender + fullførte økter"],
+            ["Exercises", "PR, 1RM og siste sett"],
+          ],
+          caption: "I Workouts kan du planlegge uka, starte en økt og følge framgang per øvelse og økt.",
+        },
+        {
+          until: 39500,
+          kicker: "LIVE",
+          title: "Live Workout",
+          subtitle: "Logg sett, reps og vekt i sanntid med resttimer og haptics.",
+          panel: [
+            ["Start fra rutine", "Eller tom økt"],
+            ["Set logging", "Reps, load og set-type"],
+            ["Rest timer", "Auto, pause, +30s"],
+            ["Summary", "Varighet, volum og session PR"],
+          ],
+          caption: "Live Workout gir rask logging mens du trener, og avsluttes med en tydelig oppsummering av økta.",
+        },
+        {
+          until: 49000,
+          kicker: "NUTRITION",
+          title: "Matlogg uten friksjon",
+          subtitle: "Logg per måltid, søk i matdatabase og lagre egne matvarer.",
+          panel: [
+            ["Diary", "Breakfast, Lunch, Dinner, Snacks"],
+            ["Search", "Quick-add og favoritter"],
+            ["Custom food", "Egne produkter på sekunder"],
+            ["Meals", "Saved meals og repeat flow"],
+          ],
+          caption: "Nutrition-flyten er laget for fart: finn mat raskt, logg til riktig måltid og bygg egne favoritter.",
+        },
+        {
+          until: 56000,
+          kicker: "PROGRESS",
+          title: "Se trendene dine",
+          subtitle: "Kombiner kroppsdata, kalorier og treningsvolum i widgets du styrer selv.",
+          panel: [
+            ["Overview", "Opptil fire nøkkelmoduler"],
+            ["Custom stats", "Velg måling, filter og periode"],
+            ["Tidsfilter", "7D, 30D, 90D, 1Y, All"],
+            ["Målbar utvikling", "Hold fokus over tid"],
+          ],
+          caption: "Progress viser tydelige trender over tid, så du ser hva som faktisk fungerer for deg.",
+        },
+        {
+          until: 60000,
+          kicker: "PROFILE",
+          title: "Mål og innstillinger",
+          subtitle: "Finjuster targets, enheter og sync-status før neste økt.",
+          panel: [
+            ["Targets", "Kalori- og proteinmål"],
+            ["Units", "Kropp, vekt, distanse og volum"],
+            ["Sync", "Status + manuell sync"],
+            ["Klar for bruk", "Alltid klart for neste dag"],
+          ],
+          caption: "Til slutt finner du mål, enheter og sync i Profile. Dette er FormFuel på omtrent ett minutt.",
+        },
+      ];
+
+      const timerEl = document.getElementById('timer');
+      const progressEl = document.getElementById('progress');
+      const kickerEl = document.getElementById('kicker');
+      const titleEl = document.getElementById('title');
+      const subtitleEl = document.getElementById('subtitle');
+      const panelEl = document.getElementById('panel');
+      const captionEl = document.getElementById('caption');
+
+      function mmss(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const min = String(Math.floor(totalSec / 60)).padStart(2, '0');
+        const sec = String(totalSec % 60).padStart(2, '0');
+        return `${min}:${sec}`;
+      }
+
+      function renderPanel(items) {
+        panelEl.innerHTML = `
+          <div class="feature-grid">
+            ${items
+              .map(
+                (item) => `<div class="chip"><strong>${item[0]}</strong>${item[1]}</div>`,
+              )
+              .join('')}
+          </div>
+        `;
+      }
+
+      function fade(el) {
+        el.classList.remove('fade');
+        void el.offsetWidth;
+        el.classList.add('fade');
+      }
+
+      let activeIndex = -1;
+      const started = performance.now();
+
+      function tick() {
+        const elapsed = Math.min(totalDurationMs, performance.now() - started);
+        timerEl.textContent = mmss(elapsed);
+        progressEl.style.width = `${(elapsed / totalDurationMs) * 100}%`;
+
+        const nextIndex = slides.findIndex((slide) => elapsed <= slide.until);
+        if (nextIndex !== -1 && nextIndex !== activeIndex) {
+          activeIndex = nextIndex;
+          const slide = slides[activeIndex];
+          kickerEl.textContent = slide.kicker;
+          titleEl.textContent = slide.title;
+          subtitleEl.textContent = slide.subtitle;
+          captionEl.textContent = slide.caption;
+          renderPanel(slide.panel);
+          fade(panelEl);
+          fade(captionEl);
+        }
+
+        if (elapsed < totalDurationMs) {
+          requestAnimationFrame(tick);
+        }
+      }
+
+      tick();
+    </script>
+  </body>
+</html>

@@ -165,6 +165,36 @@ export interface WorkoutSummary {
   prs: Array<{ label: string; value: string }>;
 }
 
+export interface CompletedWorkoutSetInput {
+  id?: string;
+  setType: SetType;
+  weightKg?: number | null;
+  reps?: number | null;
+  durationSeconds?: number | null;
+  distanceMeters?: number | null;
+  rpe?: number | null;
+  rir?: number | null;
+  isCompleted?: boolean;
+  completedAt?: string | null;
+}
+
+export interface CompletedWorkoutExerciseInput {
+  id?: string;
+  exerciseId: string;
+  notes?: string | null;
+  supersetGroup?: string | null;
+  sets: CompletedWorkoutSetInput[];
+}
+
+export interface UpdateCompletedWorkoutInput {
+  sessionId: string;
+  title: string;
+  startedAt: string;
+  endedAt: string;
+  notes?: string | null;
+  exercises: CompletedWorkoutExerciseInput[];
+}
+
 export interface WorkoutPlanItem {
   id: string;
   routineId: string;
@@ -890,6 +920,266 @@ export async function completeWorkoutSet(setId: string): Promise<number> {
   return nextCompleted ? 120 : 0;
 }
 
+export async function updateCompletedWorkoutSession(input: UpdateCompletedWorkoutInput, userId = DEMO_USER_ID): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error('Workout name is required.');
+  }
+
+  const startedAtMs = Date.parse(input.startedAt);
+  const endedAtMs = Date.parse(input.endedAt);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
+    throw new Error('Start and end time must be valid.');
+  }
+  if (startedAtMs >= endedAtMs) {
+    throw new Error('Start time must be before end time.');
+  }
+
+  for (const exercise of input.exercises) {
+    if (!exercise.exerciseId?.trim()) {
+      throw new Error('Each exercise must have a valid exercise id.');
+    }
+    if (!exercise.sets.length) {
+      throw new Error('Each exercise must contain at least one set.');
+    }
+    for (const set of exercise.sets) {
+      const weightKg = normalizeOptionalNonNegativeNumber(set.weightKg, 'Weight');
+      const reps = normalizeOptionalNonNegativeInteger(set.reps, 'Reps');
+      const durationSeconds = normalizeOptionalNonNegativeInteger(set.durationSeconds, 'Duration');
+      const distanceMeters = normalizeOptionalNonNegativeNumber(set.distanceMeters, 'Distance');
+      const rpe = normalizeOptionalNonNegativeNumber(set.rpe, 'RPE');
+      const rir = normalizeOptionalNonNegativeNumber(set.rir, 'RIR');
+      if (weightKg == null && reps == null && durationSeconds == null && distanceMeters == null && rpe == null && rir == null) {
+        // Empty sets are allowed, but kept explicit to avoid accidental implicit defaults.
+      }
+    }
+  }
+
+  const sessionRow = await db.getFirstAsync<WorkoutSessionRow>(
+    'SELECT * FROM workout_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1',
+    [input.sessionId, userId],
+  );
+  if (!sessionRow) {
+    throw new Error('Workout not found.');
+  }
+  if (sessionRow.status !== 'completed') {
+    throw new Error('Only completed workouts can be edited from history.');
+  }
+
+  const requestedExerciseIds = Array.from(new Set(input.exercises.map((exercise) => exercise.exerciseId)));
+  if (requestedExerciseIds.length) {
+    const placeholders = requestedExerciseIds.map(() => '?').join(', ');
+    const foundExercises = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM exercises WHERE deleted_at IS NULL AND id IN (${placeholders})`,
+      requestedExerciseIds,
+    );
+    if (foundExercises.length !== requestedExerciseIds.length) {
+      throw new Error('One or more selected exercises no longer exist.');
+    }
+  }
+
+  await db.runAsync(
+    `UPDATE workout_sessions
+     SET title = ?, started_at = ?, ended_at = ?, notes = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ?`,
+    [title, input.startedAt, input.endedAt, input.notes?.trim() || null, now, input.sessionId],
+  );
+  await enqueueSync('workout_session', input.sessionId, 'update', {
+    title,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    notes: input.notes?.trim() || null,
+  });
+
+  const existingExerciseRows = await db.getAllAsync<WorkoutExerciseRow>(
+    'SELECT * FROM workout_exercises WHERE workout_session_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
+    [input.sessionId],
+  );
+  const existingExerciseById = new Map(existingExerciseRows.map((row) => [row.id, row]));
+  const keptWorkoutExerciseIds = new Set<string>();
+
+  for (const [exerciseIndex, exerciseInput] of input.exercises.entries()) {
+    const sortOrder = exerciseIndex + 1;
+    const notes = exerciseInput.notes?.trim() || null;
+    const supersetGroup = exerciseInput.supersetGroup ?? null;
+    const existingExercise = exerciseInput.id ? existingExerciseById.get(exerciseInput.id) : undefined;
+
+    const workoutExerciseId = existingExercise?.id ?? createId('workout_exercise');
+    keptWorkoutExerciseIds.add(workoutExerciseId);
+
+    if (existingExercise) {
+      await db.runAsync(
+        `UPDATE workout_exercises
+         SET exercise_id = ?, sort_order = ?, superset_group = ?, notes = ?, updated_at = ?, deleted_at = NULL, sync_status = 'pending', version = version + 1
+         WHERE id = ?`,
+        [exerciseInput.exerciseId, sortOrder, supersetGroup, notes, now, workoutExerciseId],
+      );
+      await enqueueSync('workout_exercise', workoutExerciseId, 'update', {
+        workoutSessionId: input.sessionId,
+        exerciseId: exerciseInput.exerciseId,
+        sortOrder,
+        supersetGroup,
+        notes,
+      });
+    } else {
+      await db.runAsync(
+        `INSERT INTO workout_exercises
+        (id, workout_session_id, exercise_id, sort_order, superset_group, notes, created_at, updated_at, deleted_at, sync_status, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [workoutExerciseId, input.sessionId, exerciseInput.exerciseId, sortOrder, supersetGroup, notes, now, now, null, 'pending', 1],
+      );
+      await enqueueSync('workout_exercise', workoutExerciseId, 'insert', {
+        sessionId: input.sessionId,
+        exerciseId: exerciseInput.exerciseId,
+        sortOrder,
+        supersetGroup,
+        notes,
+      });
+    }
+
+    const existingSetRows = await db.getAllAsync<WorkoutSetRow>(
+      'SELECT * FROM workout_sets WHERE workout_exercise_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
+      [workoutExerciseId],
+    );
+    const existingSetById = new Map(existingSetRows.map((row) => [row.id, row]));
+    const keptSetIds = new Set<string>();
+
+    for (const [setIndex, setInput] of exerciseInput.sets.entries()) {
+      const setSortOrder = setIndex + 1;
+      const weightKg = normalizeOptionalNonNegativeNumber(setInput.weightKg, 'Weight');
+      const reps = normalizeOptionalNonNegativeInteger(setInput.reps, 'Reps');
+      const durationSeconds = normalizeOptionalNonNegativeInteger(setInput.durationSeconds, 'Duration');
+      const distanceMeters = normalizeOptionalNonNegativeNumber(setInput.distanceMeters, 'Distance');
+      const rpe = normalizeOptionalNonNegativeNumber(setInput.rpe, 'RPE');
+      const rir = normalizeOptionalNonNegativeNumber(setInput.rir, 'RIR');
+      const isCompleted = setInput.isCompleted ?? true;
+      const completedAt = isCompleted ? setInput.completedAt ?? now : null;
+      const existingSet = setInput.id ? existingSetById.get(setInput.id) : undefined;
+      const setId = existingSet?.id ?? createId('set');
+      keptSetIds.add(setId);
+
+      if (existingSet) {
+        await db.runAsync(
+          `UPDATE workout_sets
+           SET sort_order = ?, set_type = ?, weight_kg = ?, reps = ?, duration_seconds = ?, distance_meters = ?, rpe = ?, rir = ?,
+               is_completed = ?, completed_at = ?, updated_at = ?, deleted_at = NULL, sync_status = 'pending', version = version + 1
+           WHERE id = ?`,
+          [
+            setSortOrder,
+            setInput.setType,
+            weightKg,
+            reps,
+            durationSeconds,
+            distanceMeters,
+            rpe,
+            rir,
+            isCompleted ? 1 : 0,
+            completedAt,
+            now,
+            setId,
+          ],
+        );
+        await enqueueSync('workout_set', setId, 'update', {
+          sortOrder: setSortOrder,
+          setType: setInput.setType,
+          weightKg,
+          reps,
+          durationSeconds,
+          distanceMeters,
+          rpe,
+          rir,
+          isCompleted,
+          completedAt,
+        });
+      } else {
+        await db.runAsync(
+          `INSERT INTO workout_sets
+          (id, workout_exercise_id, sort_order, set_type, weight_kg, reps, duration_seconds, distance_meters, rpe, rir, is_completed, completed_at, previous_weight_kg, previous_reps, created_at, updated_at, deleted_at, sync_status, version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            setId,
+            workoutExerciseId,
+            setSortOrder,
+            setInput.setType,
+            weightKg,
+            reps,
+            durationSeconds,
+            distanceMeters,
+            rpe,
+            rir,
+            isCompleted ? 1 : 0,
+            completedAt,
+            null,
+            null,
+            now,
+            now,
+            null,
+            'pending',
+            1,
+          ],
+        );
+        await enqueueSync('workout_set', setId, 'insert', {
+          workoutExerciseId,
+          sortOrder: setSortOrder,
+          setType: setInput.setType,
+          weightKg,
+          reps,
+          durationSeconds,
+          distanceMeters,
+          rpe,
+          rir,
+          isCompleted,
+          completedAt,
+        });
+      }
+    }
+
+    for (const existingSet of existingSetRows) {
+      if (keptSetIds.has(existingSet.id)) {
+        continue;
+      }
+      await db.runAsync(
+        `UPDATE workout_sets
+         SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+         WHERE id = ? AND deleted_at IS NULL`,
+        [now, now, existingSet.id],
+      );
+      await enqueueSync('workout_set', existingSet.id, 'delete', { id: existingSet.id, workoutExerciseId });
+    }
+  }
+
+  for (const existingExercise of existingExerciseRows) {
+    if (keptWorkoutExerciseIds.has(existingExercise.id)) {
+      continue;
+    }
+    const setRows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM workout_sets WHERE workout_exercise_id = ? AND deleted_at IS NULL',
+      [existingExercise.id],
+    );
+    await db.runAsync(
+      `UPDATE workout_sets
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE workout_exercise_id = ? AND deleted_at IS NULL`,
+      [now, now, existingExercise.id],
+    );
+    await db.runAsync(
+      `UPDATE workout_exercises
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE id = ? AND deleted_at IS NULL`,
+      [now, now, existingExercise.id],
+    );
+    for (const setRow of setRows) {
+      await enqueueSync('workout_set', setRow.id, 'delete', { id: setRow.id, workoutExerciseId: existingExercise.id });
+    }
+    await enqueueSync('workout_exercise', existingExercise.id, 'delete', {
+      id: existingExercise.id,
+      workoutSessionId: input.sessionId,
+    });
+  }
+}
+
 export async function finishWorkout(sessionId: string): Promise<WorkoutSummary> {
   const db = await getDatabase();
   const now = new Date().toISOString();
@@ -1369,6 +1659,32 @@ async function persistPRs(session: WorkoutSession): Promise<void> {
 
 function calculateSetVolumeAggregate(sets: WorkoutSet[]): number {
   return Math.round(sets.reduce((total, set) => total + calculateSetVolume(set), 0) * 10) / 10;
+}
+
+function normalizeOptionalNonNegativeNumber(value: number | null | undefined, label: string): number | null {
+  if (value == null) {
+    return null;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a valid number.`);
+  }
+  if (value < 0) {
+    throw new Error(`${label} cannot be negative.`);
+  }
+  return Math.round(value * 100) / 100;
+}
+
+function normalizeOptionalNonNegativeInteger(value: number | null | undefined, label: string): number | null {
+  if (value == null) {
+    return null;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a valid number.`);
+  }
+  if (value < 0) {
+    throw new Error(`${label} cannot be negative.`);
+  }
+  return Math.round(value);
 }
 
 function mapExercise(row: ExerciseRow): Exercise {

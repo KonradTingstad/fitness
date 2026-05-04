@@ -2,9 +2,9 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Check, ChevronDown, ChevronUp, Dumbbell, Pause, Play, Plus, Trash2 } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronUp, Dumbbell, Pause, Play, Plus, Trash2, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, PanResponder, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Animated, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
@@ -36,6 +36,7 @@ interface Props {
   expanded: boolean;
   bottomInset: number;
   miniBottom: number;
+  miniHorizontalInset: number;
   onExpand: () => void;
   onMinimize: () => void;
 }
@@ -43,11 +44,10 @@ interface Props {
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type EditableField = 'weightKg' | 'reps';
 
-const COLLAPSED_HEIGHT = 92;
-const DRAG_ACTIVATION = 7;
+const COLLAPSED_HEIGHT = 62;
 const CONTENT_HORIZONTAL_PADDING = 16;
 
-export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom, onExpand, onMinimize }: Props) {
+export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom, miniHorizontalInset, onExpand, onMinimize }: Props) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
@@ -69,8 +69,6 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
   const collapsedOffset = Math.max(0, sheetHeight - COLLAPSED_HEIGHT);
   const collapseRange = Math.max(collapsedOffset, 1);
   const translateY = useRef(new Animated.Value(expanded ? 0 : collapsedOffset)).current;
-  const dragStartOffsetRef = useRef(expanded ? 0 : collapsedOffset);
-  const draggingRef = useRef(false);
   const commitActiveDraftRef = useRef<() => void>(() => undefined);
   const timerPaused = useLiveWorkoutOverlayStore((state) => state.timerPaused);
   const pausedElapsedSeconds = useLiveWorkoutOverlayStore((state) => state.pausedElapsedSeconds);
@@ -84,9 +82,6 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
   }, []);
 
   useEffect(() => {
-    if (draggingRef.current) {
-      return;
-    }
     Animated.spring(translateY, {
       toValue: expanded ? 0 : collapsedOffset,
       tension: 88,
@@ -503,60 +498,6 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
     updateSetMutation.mutate({ setId: setTypeSetId, patch: { setType: type } });
   };
 
-  const handlePanRelease = useCallback(
-    (gestureDy: number, velocityY: number) => {
-      const provisional = clamp(dragStartOffsetRef.current + gestureDy, 0, collapsedOffset);
-      const shouldExpand =
-        velocityY < -0.65 ? true : velocityY > 0.65 ? false : provisional <= collapsedOffset * 0.5;
-      const target = shouldExpand ? 0 : collapsedOffset;
-      Animated.spring(translateY, {
-        toValue: target,
-        velocity: velocityY,
-        tension: 88,
-        friction: 16,
-        useNativeDriver: true,
-      }).start();
-
-      if (shouldExpand) {
-        if (!expanded) {
-          expandSheet();
-        }
-      } else if (expanded) {
-        collapseSheet();
-      }
-    },
-    [collapseSheet, collapsedOffset, expandSheet, expanded, translateY],
-  );
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dy) > DRAG_ACTIVATION && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-        onPanResponderGrant: () => {
-          draggingRef.current = true;
-          commitActiveDraftRef.current();
-          setActiveInput(null);
-          translateY.stopAnimation((value) => {
-            dragStartOffsetRef.current = value;
-          });
-        },
-        onPanResponderMove: (_, gesture) => {
-          const next = clamp(dragStartOffsetRef.current + gesture.dy, 0, collapsedOffset);
-          translateY.setValue(next);
-        },
-        onPanResponderRelease: (_, gesture) => {
-          draggingRef.current = false;
-          handlePanRelease(gesture.dy, gesture.vy);
-        },
-        onPanResponderTerminate: (_, gesture) => {
-          draggingRef.current = false;
-          handlePanRelease(gesture.dy, gesture.vy);
-        },
-      }),
-    [collapsedOffset, handlePanRelease, translateY],
-  );
-
   const backdropOpacity = translateY.interpolate({
     inputRange: [0, collapseRange],
     outputRange: [0.3, 0],
@@ -602,74 +543,133 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
             styles.sheet,
             {
               top: expandedTop,
-              left: 0,
-              right: 0,
-              borderTopLeftRadius: expanded ? 0 : 18,
-              borderTopRightRadius: expanded ? 0 : 18,
-              borderColor: theme.colors.border,
-              backgroundColor: expanded ? '#141A22' : '#171E27',
+              bottom: expanded ? 0 : undefined,
+              height: expanded ? undefined : COLLAPSED_HEIGHT,
+              left: expanded ? 0 : miniHorizontalInset,
+              right: expanded ? 0 : miniHorizontalInset,
+              borderRadius: expanded ? 0 : 20,
+              borderWidth: expanded ? 0 : StyleSheet.hairlineWidth,
+              borderColor: expanded ? theme.colors.border : 'rgba(122,146,170,0.42)',
+              backgroundColor: expanded ? '#141A22' : 'rgba(18,27,37,0.97)',
+              shadowOpacity: expanded ? 0.32 : 0.26,
+              shadowRadius: expanded ? 16 : 16,
+              shadowOffset: { width: 0, height: expanded ? -6 : 8 },
+              elevation: expanded ? 0 : 14,
               transform: [{ translateY }],
             },
           ]}
         >
-          <View {...panResponder.panHandlers} style={[styles.dragZone, { paddingHorizontal: expanded ? CONTENT_HORIZONTAL_PADDING : 14 }]}>
-            <View style={styles.handleWrap}>
-              <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
-            </View>
-
-            <View style={styles.headerRow}>
-              <Pressable
-                onPress={expanded ? collapseSheet : expandSheet}
-                style={({ pressed }) => [styles.headerIcon, { borderColor: theme.colors.border, opacity: pressed ? 0.84 : 1 }]}
-              >
-                {expanded ? <ChevronDown size={17} color={theme.colors.text} /> : <ChevronUp size={17} color={theme.colors.text} />}
-              </Pressable>
-
-              <Pressable style={[styles.headerCopy, styles.headerCopyOffset]} onPress={!expanded ? expandSheet : undefined}>
-                <AppText variant="section" weight="800" numberOfLines={1} style={styles.workoutTitle}>
-                  {session.data.title}
-                </AppText>
-                <AppText muted variant="small" numberOfLines={1} style={styles.workoutMeta}>
-                  {headerMeta}
-                </AppText>
-              </Pressable>
-
-              <View style={styles.headerActions}>
+          {expanded ? (
+            <View style={[styles.dragZone, { paddingHorizontal: CONTENT_HORIZONTAL_PADDING }]}>
+              <View style={styles.headerRow}>
                 <Pressable
-                  onPress={() => toggleTimer(elapsedSeconds)}
-                  style={({ pressed }) => [
-                    styles.timerControl,
-                    {
-                      borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.surfaceAlt,
-                      opacity: pressed ? 0.82 : 1,
-                    },
-                  ]}
+                  onPress={collapseSheet}
+                  style={({ pressed }) => [styles.headerIcon, { borderColor: theme.colors.border, opacity: pressed ? 0.84 : 1 }]}
                 >
-                  {timerPaused ? <Play size={15} color={theme.colors.text} /> : <Pause size={15} color={theme.colors.text} />}
+                  <ChevronDown size={17} color={theme.colors.text} />
                 </Pressable>
 
-                <Animated.View
-                  pointerEvents={expanded ? 'auto' : 'none'}
-                  style={[
-                    styles.finishWrap,
-                    {
-                      opacity: expandedProgress,
-                      transform: [{ translateX: finishTranslate }],
-                    },
-                  ]}
-                >
-                  <Button
-                    label="Finish"
-                    icon={Check}
-                    onPress={handleFinish}
-                    disabled={finishMutation.isPending || finishAndUpdateRoutineMutation.isPending}
-                    style={styles.finishButton}
-                  />
-                </Animated.View>
+                <View style={[styles.headerCopy, styles.headerCopyOffset]}>
+                  <AppText variant="section" weight="800" numberOfLines={1} style={styles.workoutTitle}>
+                    {session.data.title}
+                  </AppText>
+                  <AppText muted variant="small" numberOfLines={1} style={styles.workoutMeta}>
+                    {headerMeta}
+                  </AppText>
+                </View>
+
+                <View style={styles.headerActions}>
+                  <Pressable
+                    onPress={() => toggleTimer(elapsedSeconds)}
+                    style={({ pressed }) => [
+                      styles.timerControl,
+                      {
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surfaceAlt,
+                        opacity: pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    {timerPaused ? <Play size={15} color={theme.colors.text} /> : <Pause size={15} color={theme.colors.text} />}
+                  </Pressable>
+
+                  <Animated.View
+                    pointerEvents="auto"
+                    style={[
+                      styles.finishWrap,
+                      {
+                        opacity: expandedProgress,
+                        transform: [{ translateX: finishTranslate }],
+                      },
+                    ]}
+                  >
+                    <Button
+                      label="Finish"
+                      icon={Check}
+                      onPress={handleFinish}
+                      disabled={finishMutation.isPending || finishAndUpdateRoutineMutation.isPending}
+                      style={styles.finishButton}
+                    />
+                  </Animated.View>
+                </View>
               </View>
             </View>
-          </View>
+          ) : (
+            <View style={styles.miniPressable}>
+              <LinearGradient
+                colors={['rgba(22,33,44,0.98)', 'rgba(17,26,36,0.98)', 'rgba(13,21,30,0.98)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.miniGradient}
+              >
+                <Pressable onPress={expandSheet} style={({ pressed }) => [styles.miniMainPressable, { opacity: pressed ? 0.9 : 1 }]}>
+                  <View style={styles.miniLeft}>
+                    <View style={[styles.miniIconWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                      <ChevronUp size={15} color={theme.colors.text} />
+                    </View>
+                    <View style={styles.miniCopy}>
+                      <AppText weight="800" numberOfLines={1} style={styles.miniTitle}>
+                        {session.data.title}
+                      </AppText>
+                      <AppText muted variant="small" numberOfLines={1} style={styles.miniMeta}>
+                        Active now • {formatElapsed(elapsedSeconds)}
+                      </AppText>
+                    </View>
+                  </View>
+                </Pressable>
+
+                <View style={styles.miniActions}>
+                  <Pressable
+                    onPress={() => toggleTimer(elapsedSeconds)}
+                    style={({ pressed }) => [
+                      styles.miniActionButton,
+                      {
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surfaceAlt,
+                        opacity: pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    {timerPaused ? <Play size={14} color={theme.colors.text} /> : <Pause size={14} color={theme.colors.text} />}
+                  </Pressable>
+
+                  <Pressable
+                    onPress={discardMutation.isPending ? undefined : handleCancelWorkout}
+                    style={({ pressed }) => [
+                      styles.miniActionButton,
+                      {
+                        borderColor: 'rgba(242,95,92,0.36)',
+                        backgroundColor: 'rgba(242,95,92,0.14)',
+                        opacity: discardMutation.isPending ? 0.5 : pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    <X size={14} color={theme.colors.danger} />
+                  </Pressable>
+                </View>
+              </LinearGradient>
+            </View>
+          )}
 
           <Animated.View
             pointerEvents={expanded ? 'auto' : 'none'}
@@ -828,10 +828,6 @@ function toOptionalInteger(value: string): number | null {
   return parsed;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -860,22 +856,70 @@ const styles = StyleSheet.create({
     bottom: 0,
   },
   dragZone: {
-    paddingTop: 4,
-  },
-  handleWrap: {
-    alignItems: 'center',
-    paddingBottom: 6,
-  },
-  handle: {
-    borderRadius: 999,
-    height: 3,
-    width: 42,
+    paddingTop: 22,
   },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
     paddingBottom: 6,
+  },
+  miniPressable: {
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  miniGradient: {
+    alignItems: 'center',
+    borderRadius: 18,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: COLLAPSED_HEIGHT,
+    paddingHorizontal: 10,
+  },
+  miniMainPressable: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 8,
+  },
+  miniLeft: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    minWidth: 0,
+  },
+  miniIconWrap: {
+    alignItems: 'center',
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  miniCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  miniTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  miniMeta: {
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  miniActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingLeft: 8,
+  },
+  miniActionButton: {
+    alignItems: 'center',
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
   },
   headerIcon: {
     alignItems: 'center',
@@ -932,7 +976,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   expandedContentOffset: {
-    paddingTop: 6,
+    paddingTop: 14,
   },
   progressText: {
     fontSize: 12,

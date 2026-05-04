@@ -20,6 +20,8 @@ import {
   Search,
   SlidersHorizontal,
   Star,
+  Trophy,
+  Weight,
   X,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -33,6 +35,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
+import { calculateWorkoutVolume } from '@/domain/calculations/workout';
 import {
   deleteRoutineTemplate,
   ProgramActivityType,
@@ -46,6 +49,7 @@ import {
 import { useExercises, useProgramDayOutcomesForRange, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
+import { CompletedWorkoutDetailsModal } from '@/features/workouts/components/history/CompletedWorkoutDetailsModal';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { DateNavigator } from '@/components/DateNavigator';
@@ -125,6 +129,12 @@ interface WorkoutGroup {
   routineIds: string[];
 }
 
+interface RecentHistoryExerciseRow {
+  id: string;
+  exerciseLabel: string;
+  bestSetLabel: string;
+}
+
 function buildExerciseStats(recentWorkouts: WorkoutSession[]): Map<string, ExerciseStats> {
   const stats = new Map<string, ExerciseStats>();
   for (const workout of recentWorkouts) {
@@ -154,6 +164,83 @@ function durationMinutes(workout: WorkoutSession): number {
     return Math.max(1, Math.round((new Date(workout.endedAt).getTime() - new Date(workout.startedAt).getTime()) / 60000));
   }
   return Math.max(20, workout.exercises.length * 12);
+}
+
+function formatWorkoutDuration(workout: WorkoutSession): string {
+  const minutes = durationMinutes(workout);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function formatWeightLabel(weightKg: number): string {
+  return weightKg.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatBestSet(weightKg?: number | null, reps?: number | null): string {
+  if ((weightKg ?? 0) > 0 && (reps ?? 0) > 0) {
+    return `${formatWeightLabel(weightKg ?? 0)} kg x ${reps}`;
+  }
+  if ((weightKg ?? 0) > 0) {
+    return `${formatWeightLabel(weightKg ?? 0)} kg`;
+  }
+  if ((reps ?? 0) > 0) {
+    return `${reps} reps`;
+  }
+  return '--';
+}
+
+function calculateWorkoutVolumeKg(workout: WorkoutSession): number {
+  return calculateWorkoutVolume(workout.exercises.flatMap((exercise) => exercise.sets));
+}
+
+function calculateWorkoutPRCount(workout: WorkoutSession): number {
+  return workout.exercises
+    .flatMap((exercise) => exercise.sets)
+    .filter(
+      (set) =>
+        set.isCompleted && (set.weightKg ?? 0) > (set.previousWeightKg ?? 0) && (set.reps ?? 0) >= (set.previousReps ?? 0),
+    ).length;
+}
+
+function buildRecentHistoryRows(workout: WorkoutSession): RecentHistoryExerciseRow[] {
+  return workout.exercises
+    .map((workoutExercise) => {
+      const completedSets = workoutExercise.sets.filter((set) => set.isCompleted);
+      if (!completedSets.length) {
+        return null;
+      }
+
+      const bestSet = completedSets.reduce((best, set) => {
+        if (!best) {
+          return set;
+        }
+        const setWeight = set.weightKg ?? 0;
+        const setReps = set.reps ?? 0;
+        const bestWeight = best.weightKg ?? 0;
+        const bestReps = best.reps ?? 0;
+        const setVolume = setWeight * setReps;
+        const bestVolume = bestWeight * bestReps;
+        if (setVolume !== bestVolume) {
+          return setVolume > bestVolume ? set : best;
+        }
+        if (setWeight !== bestWeight) {
+          return setWeight > bestWeight ? set : best;
+        }
+        return setReps > bestReps ? set : best;
+      }, completedSets[0]);
+
+      return {
+        id: workoutExercise.id,
+        exerciseLabel: `${completedSets.length} x ${workoutExercise.exercise?.name ?? 'Exercise'}`,
+        bestSetLabel: formatBestSet(bestSet?.weightKg, bestSet?.reps),
+      };
+    })
+    .filter((row): row is RecentHistoryExerciseRow => Boolean(row))
+    .slice(0, 5);
 }
 
 function mapExerciseCategory(primaryMuscle: string): ExerciseFilter {
@@ -559,11 +646,14 @@ export function WorkoutDashboardScreen() {
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(() => new Set());
   const [historyMonth, setHistoryMonth] = useState(() => new Date());
   const [historyCalendarMode, setHistoryCalendarMode] = useState<HistoryCalendarMode>('month');
+  const [historyDetailsSessionId, setHistoryDetailsSessionId] = useState<string | null>(null);
   const today = new Date();
   const todayKey = localDateKey(today);
   const [selectedDate, setSelectedDate] = useState(() => todayKey);
   const selectedDateObj = new Date(`${selectedDate}T00:00:00`);
   const todayMonthKey = localDateKey(startOfMonth(today));
+  const todayWeekStart = startOfWeek(today, { weekStartsOn: 1 });
+  const todayWeekEnd = endOfWeek(today, { weekStartsOn: 1 });
   const weekStart = startOfWeek(selectedDateObj, { weekStartsOn: 1 });
   const weekEnd = endOfWeek(selectedDateObj, { weekStartsOn: 1 });
   const [programWeekStart, setProgramWeekStart] = useState(() => weekStart);
@@ -572,7 +662,7 @@ export function WorkoutDashboardScreen() {
   const programWeekEndKey = localDateKey(programWeekEnd);
   const streakStart = addDays(today, -35);
   const planRangeStart = localDateKey(streakStart);
-  const planRangeEnd = selectedDate;
+  const planRangeEnd = selectedDate > todayKey ? selectedDate : todayKey;
   const weekStartKey = localDateKey(weekStart);
   const weekEndKey = localDateKey(weekEnd);
   const historyCalendarAnchor = historyCalendarMode === 'month' ? historyMonth : today;
@@ -586,7 +676,7 @@ export function WorkoutDashboardScreen() {
   const routines = useRoutines();
   const recent = useRecentWorkouts();
   const thisWeekProgramSchedule = useProgramScheduleForRange(weekStartKey, weekEndKey);
-  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, selectedDate);
+  const streakProgramSchedule = useProgramScheduleForRange(planRangeStart, todayKey);
   const programSchedule = useProgramScheduleForRange(programWeekStartKey, programWeekEndKey);
   const nonStrengthOutcomes = useProgramDayOutcomesForRange(planRangeStart, planRangeEnd);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
@@ -750,12 +840,13 @@ export function WorkoutDashboardScreen() {
   const historyCalendarYears = Array.from({ length: HISTORY_MULTI_YEAR_COUNT }, (_, index) => historyYear - HISTORY_MULTI_YEAR_COUNT + 1 + index);
   const weekProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(weekStart, index), thisWeekScheduleMap, routineList));
   const selectedProgramDay = buildProgramDay(selectedDateObj, thisWeekScheduleMap, routineList);
-  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(selectedDateObj, -index), streakScheduleMap, routineList));
-  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, selectedDate, nonStrengthOutcomesByDate);
+  const streakHistoryDays = Array.from({ length: 36 }, (_, index) => buildProgramDay(addDays(today, -index), streakScheduleMap, routineList));
+  const streakCount = calculateCurrentStreak(streakHistoryDays, groupedSessions, todayKey, nonStrengthOutcomesByDate);
+  const streakVisualProgramDays = Array.from({ length: 7 }, (_, index) => buildProgramDay(addDays(todayWeekStart, index), streakScheduleMap, routineList));
 
   const workoutsThisWeek = sessionRange.filter((workout) => {
     const startedAt = new Date(workout.startedAt);
-    return workout.status === 'completed' && startedAt >= weekStart && startedAt <= weekEnd;
+    return workout.status === 'completed' && startedAt >= todayWeekStart && startedAt <= todayWeekEnd;
   });
   const weekMinutes = workoutsThisWeek.reduce((sum, workout) => sum + durationMinutes(workout), 0);
   const completedSetsThisWeek = workoutsThisWeek.flatMap((workout) =>
@@ -1114,9 +1205,9 @@ export function WorkoutDashboardScreen() {
       day,
       adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
-    const streakVisualDays = weekProgramDays.map((day) => ({
+    const streakVisualDays = streakVisualProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
 
     return (
@@ -1505,6 +1596,19 @@ export function WorkoutDashboardScreen() {
     setProgramWeekStart((current) => addDays(current, direction * 7));
   };
 
+  const openHistoryDetails = (sessionId: string) => {
+    setHistoryDetailsSessionId(sessionId);
+  };
+
+  const closeHistoryDetails = () => {
+    setHistoryDetailsSessionId(null);
+  };
+
+  const editHistoryWorkout = (sessionId: string) => {
+    setHistoryDetailsSessionId(null);
+    navigation.navigate('WorkoutSummary', { sessionId, startInEdit: true });
+  };
+
   const renderHistoryCalendarTabs = () => (
     <View style={[styles.calendarModeRow, { backgroundColor: theme.colors.surfaceAlt }]}>
       {HISTORY_CALENDAR_MODES.map((item) => {
@@ -1572,7 +1676,7 @@ export function WorkoutDashboardScreen() {
             <Pressable
               key={localDateKey(date)}
               disabled={!workout}
-              onPress={workout ? () => navigation.navigate('WorkoutSummary', { sessionId: workout.id }) : undefined}
+              onPress={workout ? () => openHistoryDetails(workout.id) : undefined}
               style={({ pressed }) => [styles.monthDayCell, { opacity: pressed ? 0.72 : 1 }]}
             >
               <View
@@ -1734,27 +1838,78 @@ export function WorkoutDashboardScreen() {
         <History color={theme.colors.muted} size={18} />
       </View>
       {recentList.length ? (
-        recentList.map((workout) => (
-          <Card key={workout.id} onPress={() => navigation.navigate('WorkoutSummary', { sessionId: workout.id })} style={styles.listCard}>
-            <View style={styles.historyRow}>
-              <View style={[styles.historyIcon, { backgroundColor: theme.colors.surfaceAlt }]}>
-                <Dumbbell size={22} color={theme.colors.primary} />
+        recentList.map((workout) => {
+          const volumeKg = Math.round(calculateWorkoutVolumeKg(workout));
+          const prCount = calculateWorkoutPRCount(workout);
+          const exerciseRows = buildRecentHistoryRows(workout);
+          return (
+            <Card
+              key={workout.id}
+              onPress={() => openHistoryDetails(workout.id)}
+              style={styles.recentHistoryCard}
+            >
+              <View style={styles.recentHistoryHeader}>
+                <View style={styles.recentHistoryHeaderCopy}>
+                  <AppText weight="800" style={styles.savedTitle}>
+                    {workout.title}
+                  </AppText>
+                  <AppText muted>{format(new Date(workout.startedAt), 'EEEE, d MMM')}</AppText>
+                </View>
+                <View style={[styles.recentHistoryMenu, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <EllipsisVertical size={18} color={theme.colors.info} />
+                </View>
               </View>
-              <View style={styles.historyCopy}>
-                <AppText weight="800" style={styles.savedTitle}>
-                  {workout.title}
-                </AppText>
-                <AppText muted>
-                  {format(new Date(workout.startedAt), 'd/M/yyyy')} • {workout.exercises.length} exercises
-                </AppText>
+
+              <View style={styles.recentHistoryMetrics}>
+                <View style={styles.recentHistoryMetric}>
+                  <Clock size={20} color={theme.colors.muted} />
+                  <AppText muted style={styles.recentHistoryMetricText}>
+                    {formatWorkoutDuration(workout)}
+                  </AppText>
+                </View>
+                <View style={styles.recentHistoryMetric}>
+                  <Weight size={20} color={theme.colors.muted} />
+                  <AppText muted style={styles.recentHistoryMetricText}>
+                    {volumeKg.toLocaleString()} kg
+                  </AppText>
+                </View>
+                <View style={styles.recentHistoryMetric}>
+                  <Trophy size={20} color={theme.colors.muted} />
+                  <AppText muted style={styles.recentHistoryMetricText}>
+                    {prCount} PRs
+                  </AppText>
+                </View>
               </View>
-              <View style={styles.historyMeta}>
-                <AppText muted>{durationMinutes(workout)} min</AppText>
-                <Clock size={18} color={theme.colors.muted} />
+
+              <View style={styles.recentHistoryTable}>
+                <View style={styles.recentHistoryTableHeader}>
+                  <AppText weight="800" style={styles.recentHistoryColumnTitle}>
+                    Exercise
+                  </AppText>
+                  <AppText weight="800" style={[styles.recentHistoryColumnTitle, styles.recentHistoryBestSetColumn]}>
+                    Best Set
+                  </AppText>
+                </View>
+                {exerciseRows.length ? (
+                  exerciseRows.map((row) => (
+                    <View key={row.id} style={styles.recentHistoryTableRow}>
+                      <AppText muted numberOfLines={1} style={styles.recentHistoryExerciseLabel}>
+                        {row.exerciseLabel}
+                      </AppText>
+                      <AppText muted numberOfLines={1} style={[styles.recentHistoryBestSetValue, styles.recentHistoryBestSetColumn]}>
+                        {row.bestSetLabel}
+                      </AppText>
+                    </View>
+                  ))
+                ) : (
+                  <AppText muted style={styles.recentHistoryEmpty}>
+                    No completed sets logged.
+                  </AppText>
+                )}
               </View>
-            </View>
-          </Card>
-        ))
+            </Card>
+          );
+        })
       ) : (
         <EmptyState icon={History} title="No workouts logged" body="Completed sessions will appear here with volume, duration, and PR context." />
       )}
@@ -1871,23 +2026,32 @@ export function WorkoutDashboardScreen() {
   );
 
   return (
-    <Screen resetScrollOnBlur>
-      <View style={styles.header}>
-        <View>
-          <AppText variant="title">Workouts</AppText>
-          <AppText muted>Templates, history, and active logging.</AppText>
+    <>
+      <Screen resetScrollOnBlur>
+        <View style={styles.header}>
+          <View>
+            <AppText variant="title">Workouts</AppText>
+            <AppText muted>Templates, history, and active logging.</AppText>
+          </View>
+          <Button label="+ Empty" variant="secondary" onPress={() => startEmpty.mutate()} style={styles.headerAction} />
         </View>
-        <Button label="+ Empty" variant="secondary" onPress={() => startEmpty.mutate()} style={styles.headerAction} />
-      </View>
 
-      {renderTabs()}
-      {tab === 'today' ? <DateNavigator localDate={selectedDate} onChange={setSelectedDate} hint /> : null}
+        {renderTabs()}
+        {tab === 'today' ? <DateNavigator localDate={selectedDate} onChange={setSelectedDate} hint /> : null}
 
-      {tab === 'today' ? renderTodayTab() : null}
-      {tab === 'program' ? renderProgramTab() : null}
-      {tab === 'history' ? renderHistoryTab() : null}
-      {tab === 'exercises' ? renderExercisesTab() : null}
-    </Screen>
+        {tab === 'today' ? renderTodayTab() : null}
+        {tab === 'program' ? renderProgramTab() : null}
+        {tab === 'history' ? renderHistoryTab() : null}
+        {tab === 'exercises' ? renderExercisesTab() : null}
+      </Screen>
+
+      <CompletedWorkoutDetailsModal
+        visible={Boolean(historyDetailsSessionId)}
+        sessionId={historyDetailsSessionId}
+        onClose={closeHistoryDetails}
+        onEdit={editHistoryWorkout}
+      />
+    </>
   );
 }
 
@@ -2402,26 +2566,72 @@ const styles = StyleSheet.create({
     height: '74%',
     width: StyleSheet.hairlineWidth,
   },
-  historyRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
+  recentHistoryCard: {
     gap: 10,
   },
-  historyIcon: {
+  recentHistoryHeader: {
     alignItems: 'center',
-    borderRadius: 23,
-    height: 46,
-    justifyContent: 'center',
-    width: 46,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
-  historyCopy: {
+  recentHistoryHeaderCopy: {
     flex: 1,
-    gap: 2,
+    gap: 4,
+    minWidth: 0,
+    paddingRight: 10,
   },
-  historyMeta: {
+  recentHistoryMenu: {
+    alignItems: 'center',
+    borderRadius: 16,
+    height: 36,
+    justifyContent: 'center',
+    width: 48,
+  },
+  recentHistoryMetrics: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  recentHistoryMetric: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 6,
+  },
+  recentHistoryMetricText: {
+    fontSize: 15,
+  },
+  recentHistoryTable: {
+    gap: 6,
+  },
+  recentHistoryTableHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+  },
+  recentHistoryColumnTitle: {
+    fontSize: 16,
+  },
+  recentHistoryBestSetColumn: {
+    width: '44%',
+  },
+  recentHistoryTableRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 24,
+  },
+  recentHistoryExerciseLabel: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 22,
+    maxWidth: '56%',
+    paddingRight: 8,
+  },
+  recentHistoryBestSetValue: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  recentHistoryEmpty: {
+    fontSize: 14,
+    lineHeight: 20,
   },
   searchRow: {
     flexDirection: 'row',

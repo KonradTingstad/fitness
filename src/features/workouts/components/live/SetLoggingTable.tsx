@@ -26,6 +26,12 @@ interface Props {
   onOpenExerciseMenu?: (workoutExerciseId: string) => void;
 }
 
+const SET_COLUMN_WIDTH = 40;
+const METRIC_COLUMN_WIDTH = 62;
+const CHECK_COLUMN_WIDTH = 42;
+const COLUMN_GAP = 6;
+const ROW_CONTENT_HORIZONTAL_PADDING = 14;
+
 export function SetLoggingTable({
   exercises,
   draftBySetId,
@@ -127,46 +133,57 @@ export function SetLoggingTable({
                       : { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border };
 
               return (
-                <View key={set.id} style={[styles.row, { borderBottomColor: theme.colors.border }]}>
-                  <Pressable
-                    onPress={() => onOpenSetTypeMenu(set.id)}
-                    style={({ pressed }) => [styles.setLabelWrap, labelSurfaceStyle, { opacity: pressed ? 0.82 : 1 }]}
-                  >
-                    <AppText weight="700" style={[styles.setLabelText, { color: setColor }]}>
-                      {setLabel}
+                <View
+                  key={set.id}
+                  style={[
+                    styles.row,
+                    {
+                      borderBottomColor: theme.colors.border,
+                      backgroundColor: set.isCompleted ? 'rgba(53,199,122,0.12)' : 'transparent',
+                    },
+                  ]}
+                >
+                  <View style={styles.rowContent}>
+                    <Pressable
+                      onPress={() => onOpenSetTypeMenu(set.id)}
+                      style={({ pressed }) => [styles.setLabelWrap, labelSurfaceStyle, { opacity: pressed ? 0.82 : 1 }]}
+                    >
+                      <AppText weight="700" style={[styles.setLabelText, { color: setColor }]}>
+                        {setLabel}
+                      </AppText>
+                    </Pressable>
+
+                    <AppText muted variant="small" numberOfLines={1} style={styles.previousText}>
+                      {previous}
                     </AppText>
-                  </Pressable>
 
-                  <AppText muted variant="small" style={styles.previousText}>
-                    {previous}
-                  </AppText>
+                    <FieldCell
+                      value={draft.weightKg}
+                      active={activeInput?.setId === set.id && activeInput.field === 'weightKg'}
+                      onPress={() => onSelectInput(set.id, 'weightKg')}
+                    />
 
-                  <FieldCell
-                    value={draft.weightKg}
-                    active={activeInput?.setId === set.id && activeInput.field === 'weightKg'}
-                    onPress={() => onSelectInput(set.id, 'weightKg')}
-                  />
+                    <FieldCell
+                      value={draft.reps}
+                      active={activeInput?.setId === set.id && activeInput.field === 'reps'}
+                      onPress={() => onSelectInput(set.id, 'reps')}
+                    />
 
-                  <FieldCell
-                    value={draft.reps}
-                    active={activeInput?.setId === set.id && activeInput.field === 'reps'}
-                    onPress={() => onSelectInput(set.id, 'reps')}
-                  />
-
-                  <Pressable
-                    onPress={() => onToggleSetComplete(set.id)}
-                    style={({ pressed }) => [
-                      styles.checkCell,
-                      {
-                        borderColor: set.isCompleted ? theme.colors.primary : theme.colors.border,
-                        borderWidth: set.isCompleted ? StyleSheet.hairlineWidth : 0,
-                        backgroundColor: set.isCompleted ? 'rgba(53,199,122,0.2)' : theme.colors.surfaceAlt,
-                        opacity: pressed ? 0.82 : 1,
-                      },
-                    ]}
-                  >
-                    {set.isCompleted ? <Check size={14} color={theme.colors.primary} /> : <Circle size={14} color={theme.colors.muted} />}
-                  </Pressable>
+                    <Pressable
+                      onPress={() => onToggleSetComplete(set.id)}
+                      style={({ pressed }) => [
+                        styles.checkCell,
+                        {
+                          borderColor: set.isCompleted ? theme.colors.primary : theme.colors.border,
+                          borderWidth: set.isCompleted ? StyleSheet.hairlineWidth : 0,
+                          backgroundColor: set.isCompleted ? 'rgba(53,199,122,0.2)' : theme.colors.surfaceAlt,
+                          opacity: pressed ? 0.82 : 1,
+                        },
+                      ]}
+                    >
+                      {set.isCompleted ? <Check size={14} color={theme.colors.primary} /> : <Circle size={14} color={theme.colors.muted} />}
+                    </Pressable>
+                  </View>
                 </View>
               );
             })}
@@ -270,16 +287,23 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
+    gap: COLUMN_GAP,
+    marginHorizontal: -ROW_CONTENT_HORIZONTAL_PADDING,
     minHeight: 32,
-    paddingHorizontal: 6,
+    paddingHorizontal: ROW_CONTENT_HORIZONTAL_PADDING,
   },
   row: {
-    alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    gap: 8,
+    marginHorizontal: -ROW_CONTENT_HORIZONTAL_PADDING,
     minHeight: 46,
-    paddingHorizontal: 6,
+    justifyContent: 'center',
+  },
+  rowContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flex: 1,
+    gap: COLUMN_GAP,
+    paddingHorizontal: ROW_CONTENT_HORIZONTAL_PADDING,
     paddingVertical: 3,
   },
   setLabelWrap: {
@@ -288,42 +312,45 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     justifyContent: 'center',
     minHeight: 24,
-    minWidth: 30,
-    paddingHorizontal: 6,
+    width: SET_COLUMN_WIDTH,
   },
   columnHeaderText: {
     fontSize: 11,
     letterSpacing: 0.2,
   },
   setLabelHeader: {
-    width: 34,
+    textAlign: 'center',
+    width: SET_COLUMN_WIDTH,
   },
   setLabelText: {
     fontSize: 13,
   },
   previousCell: {
     flex: 1,
+    textAlign: 'center',
   },
   previousText: {
     flex: 1,
     fontSize: 12,
     lineHeight: 16,
     opacity: 0.82,
+    paddingHorizontal: 8,
+    textAlign: 'center',
   },
   metricHeader: {
     textAlign: 'center',
-    width: 56,
+    width: METRIC_COLUMN_WIDTH,
   },
   checkHeader: {
     textAlign: 'center',
-    width: 36,
+    width: CHECK_COLUMN_WIDTH,
   },
   fieldCell: {
     alignItems: 'center',
     borderRadius: 8,
     justifyContent: 'center',
     minHeight: 32,
-    width: 56,
+    width: METRIC_COLUMN_WIDTH,
     paddingHorizontal: 6,
   },
   fieldValueText: {
@@ -335,7 +362,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: 'center',
     minHeight: 32,
-    width: 36,
+    width: CHECK_COLUMN_WIDTH,
   },
   addSetButton: {
     alignItems: 'center',

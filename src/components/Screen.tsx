@@ -1,7 +1,7 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { PropsWithChildren, useCallback, useRef } from 'react';
-import { ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScrollView, ScrollViewProps, StyleSheet, View, ViewStyle } from 'react-native';
+import { Edge, SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppBackground } from '@/components/AppBackground';
 import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
@@ -13,9 +13,21 @@ interface Props extends PropsWithChildren {
   padded?: boolean;
   style?: ViewStyle;
   resetScrollOnBlur?: boolean;
+  backgroundVariant?: 'app' | 'plain';
+  safeAreaEdges?: Edge[];
+  contentInsetAdjustmentBehavior?: ScrollViewProps['contentInsetAdjustmentBehavior'];
 }
 
-export function Screen({ children, scroll = true, padded = true, style, resetScrollOnBlur = false }: Props) {
+export function Screen({
+  children,
+  scroll = true,
+  padded = true,
+  style,
+  resetScrollOnBlur = false,
+  backgroundVariant = 'app',
+  safeAreaEdges,
+  contentInsetAdjustmentBehavior,
+}: Props) {
   const theme = useAppTheme();
   const scrollViewRef = useRef<ScrollView>(null);
   const tabBarClearance = useFloatingTabBarClearance(8);
@@ -35,10 +47,15 @@ export function Screen({ children, scroll = true, padded = true, style, resetScr
 
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
-      <AppBackground />
-      <SafeAreaView style={styles.safeArea}>
+      {backgroundVariant === 'app' ? <AppBackground /> : null}
+      <SafeAreaView edges={safeAreaEdges} style={styles.safeArea}>
         {scroll ? (
-          <ScrollView ref={scrollViewRef} contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={scrollViewRef}
+            contentContainerStyle={contentStyle}
+            keyboardShouldPersistTaps="handled"
+            contentInsetAdjustmentBehavior={contentInsetAdjustmentBehavior}
+          >
             {children}
           </ScrollView>
         ) : (

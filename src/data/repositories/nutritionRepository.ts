@@ -4,6 +4,7 @@ import { enqueueSync } from '@/data/sync/syncQueue';
 import { isSupabaseConfigured, supabase } from '@/data/sync/supabase';
 import { shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
 import { calculateCalorieGoalStreak, sumDiaryEntries } from '@/domain/calculations/nutrition';
+import { DEFAULT_CAFFEINE_TARGET_MG, getCaffeineTargetMg } from '@/data/repositories/settingsRepository';
 import {
   DiaryDay,
   DiaryEntry,
@@ -124,6 +125,32 @@ type DiaryDayRow = {
   version: number;
 };
 
+type CaffeineLogRow = {
+  id: string;
+  user_id: string;
+  local_date: string;
+  drink_name: string;
+  caffeine_mg: number;
+  amount_ml: number | null;
+  consumed_at: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  sync_status: 'synced' | 'pending' | 'failed';
+  version: number;
+};
+
+type CaffeineDiaryEntryRow = {
+  entry_id: string;
+  logged_at: string;
+  servings: number;
+  quantity_type: 'portion' | 'gram' | null;
+  total_grams: number | null;
+  drink_name: string;
+  caffeine_mg_per_can: number | null;
+  grams_per_serving: number;
+};
+
 export interface DiarySummary {
   day: DiaryDay;
   totals: NutritionTotals;
@@ -135,6 +162,19 @@ export interface FoodSuggestion {
   totalLogs: number;
   commonMealSlot: MealSlot;
   lastLoggedAt: string;
+}
+
+export interface CaffeineDailySummary {
+  localDate: string;
+  totalCaffeineMg: number;
+  goalCaffeineMg: number;
+  lastLog: {
+    id: string;
+    drinkName: string;
+    caffeineMg: number;
+    consumedAt: string;
+    source: 'diary' | 'legacy';
+  } | null;
 }
 
 export type FoodSearchItemType = FoodItemType | 'all';
@@ -526,6 +566,257 @@ export async function addWater(amountMl: number, localDate = toLocalDateKey(), u
     [id, userId, localDate, amountMl, now, now, now, null, 'pending', 1],
   );
   await enqueueSync('water_log', id, 'insert', { localDate, amountMl });
+}
+
+function resolveCaffeineFromDiaryRow(row: CaffeineDiaryEntryRow): number {
+  const caffeinePerServing = Number.isFinite(row.caffeine_mg_per_can) ? Math.max(0, row.caffeine_mg_per_can ?? 0) : 0;
+  if (caffeinePerServing <= 0) {
+    return 0;
+  }
+  const gramsPerServing = Number.isFinite(row.grams_per_serving) && row.grams_per_serving > 0 ? row.grams_per_serving : 0;
+  const totalGrams = Number.isFinite(row.total_grams) && (row.total_grams ?? 0) > 0 ? row.total_grams ?? 0 : 0;
+  const isGramEntry = row.quantity_type === 'gram' && gramsPerServing > 0 && totalGrams > 0;
+  const servingFactor = isGramEntry ? totalGrams / gramsPerServing : Math.max(0, row.servings);
+  return Math.max(0, caffeinePerServing * servingFactor);
+}
+
+export async function getDailyCaffeineSummary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<CaffeineDailySummary> {
+  const db = await getDatabase();
+  const [diaryRows, legacyRows, goalCaffeineMg] = await Promise.all([
+    db.getAllAsync<CaffeineDiaryEntryRow>(
+      `SELECT
+         e.id as entry_id,
+         e.logged_at,
+         e.servings,
+         e.quantity_type,
+         e.total_grams,
+         f.name as drink_name,
+         f.caffeine_mg_per_can,
+         f.grams_per_serving
+       FROM diary_days d
+       JOIN diary_entries e ON e.diary_day_id = d.id AND e.deleted_at IS NULL
+       JOIN food_items f ON f.id = e.food_item_id AND f.deleted_at IS NULL
+       WHERE d.user_id = ?
+         AND d.local_date = ?
+         AND d.deleted_at IS NULL
+         AND COALESCE(f.caffeine_mg_per_can, 0) > 0
+       ORDER BY e.logged_at DESC`,
+      [userId, localDate],
+    ),
+    db.getAllAsync<CaffeineLogRow>(
+      `SELECT *
+       FROM caffeine_logs
+       WHERE user_id = ? AND local_date = ? AND deleted_at IS NULL
+       ORDER BY consumed_at DESC`,
+      [userId, localDate],
+    ),
+    getCaffeineTargetMg(userId).catch(() => DEFAULT_CAFFEINE_TARGET_MG),
+  ]);
+
+  const totalDiaryCaffeineMg = diaryRows.reduce((sum, row) => sum + resolveCaffeineFromDiaryRow(row), 0);
+  const totalLegacyCaffeineMg = legacyRows.reduce((sum, row) => sum + Math.max(0, row.caffeine_mg), 0);
+  const totalCaffeineMg = Math.round(totalDiaryCaffeineMg + totalLegacyCaffeineMg);
+
+  const latestDiary = diaryRows[0];
+  const latestLegacy = legacyRows[0];
+  const latestDiaryAt = latestDiary?.logged_at ? new Date(latestDiary.logged_at).getTime() : 0;
+  const latestLegacyAt = latestLegacy?.consumed_at ? new Date(latestLegacy.consumed_at).getTime() : 0;
+  const latestFromDiary = latestDiaryAt >= latestLegacyAt;
+
+  return {
+    localDate,
+    totalCaffeineMg,
+    goalCaffeineMg: goalCaffeineMg > 0 ? goalCaffeineMg : DEFAULT_CAFFEINE_TARGET_MG,
+    lastLog:
+      latestDiary || latestLegacy
+        ? latestFromDiary && latestDiary
+          ? {
+              id: latestDiary.entry_id,
+              drinkName: latestDiary.drink_name,
+              caffeineMg: Math.round(resolveCaffeineFromDiaryRow(latestDiary)),
+              consumedAt: latestDiary.logged_at,
+              source: 'diary',
+            }
+          : latestLegacy
+            ? {
+                id: latestLegacy.id,
+                drinkName: latestLegacy.drink_name,
+                caffeineMg: Math.round(Math.max(0, latestLegacy.caffeine_mg)),
+                consumedAt: latestLegacy.consumed_at,
+                source: 'legacy',
+              }
+            : null
+        : null,
+  };
+}
+
+async function ensureManualCaffeineDrinkFood(
+  drinkName: string,
+  caffeineMg: number,
+  userId: string,
+): Promise<{ id: string; caffeineMgPerCan: number }> {
+  const db = await getDatabase();
+  const normalizedName = drinkName.trim();
+  const normalizedCaffeineMg = Math.round(Math.max(0, caffeineMg));
+  const existing = await db.getFirstAsync<FoodRow>(
+    `SELECT *
+     FROM food_items
+     WHERE user_id = ?
+       AND item_type = 'drink'
+       AND is_custom = 1
+       AND deleted_at IS NULL
+       AND LOWER(name) = LOWER(?)
+       AND CAST(ROUND(COALESCE(caffeine_mg_per_can, 0), 0) AS INTEGER) = ?
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [userId, normalizedName, normalizedCaffeineMg],
+  );
+
+  if (!existing) {
+    const form: CustomFoodForm = {
+      name: normalizedName,
+      brandName: undefined,
+      servingSize: 1,
+      servingUnit: 'serving',
+      gramsPerServing: 1,
+      calories: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+      fiberG: 0,
+      sugarG: 0,
+      saturatedFatG: 0,
+      sodiumMg: 0,
+      caffeineMgPerCan: normalizedCaffeineMg,
+      barcode: undefined,
+    };
+    const id = await createCustomFood(form, userId, 'drink');
+    return { id, caffeineMgPerCan: normalizedCaffeineMg };
+  }
+  return { id: existing.id, caffeineMgPerCan: normalizedCaffeineMg };
+}
+
+export async function logManualCaffeineDrink(
+  input: {
+    localDate: string;
+    drinkName: string;
+    caffeineMg: number;
+    mealSlot?: MealSlot;
+  },
+  userId = DEMO_USER_ID,
+): Promise<string> {
+  const drinkName = input.drinkName.trim();
+  if (!drinkName.length) {
+    throw new Error('Drink name is required.');
+  }
+  if (!Number.isFinite(input.caffeineMg) || input.caffeineMg <= 0) {
+    throw new Error('Caffeine amount must be greater than zero.');
+  }
+  const drinkFood = await ensureManualCaffeineDrinkFood(drinkName, input.caffeineMg, userId);
+  return addDiaryEntry({
+    localDate: input.localDate,
+    mealSlot: input.mealSlot ?? 'snacks',
+    foodItemId: drinkFood.id,
+    servings: 1,
+    userId,
+  });
+}
+
+export async function addCaffeineLog(
+  input: { drinkName: string; caffeineMg: number; amountMl?: number | null; consumedAt?: string | null },
+  localDate = toLocalDateKey(),
+  userId = DEMO_USER_ID,
+): Promise<string> {
+  const drinkName = input.drinkName.trim();
+  if (!drinkName.length) {
+    throw new Error('Drink name is required.');
+  }
+  if (!Number.isFinite(input.caffeineMg) || input.caffeineMg <= 0) {
+    throw new Error('Caffeine amount must be greater than zero.');
+  }
+
+  const db = await getDatabase();
+  const id = createId('caffeine');
+  const now = new Date().toISOString();
+  const caffeineMg = Math.round(Math.max(0, input.caffeineMg));
+  const amountMl = input.amountMl != null && Number.isFinite(input.amountMl) && input.amountMl > 0 ? input.amountMl : null;
+  const consumedAt = input.consumedAt ?? now;
+
+  await db.runAsync(
+    `INSERT INTO caffeine_logs
+    (id, user_id, local_date, drink_name, caffeine_mg, amount_ml, consumed_at, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, userId, localDate, drinkName, caffeineMg, amountMl, consumedAt, now, now, null, 'pending', 1],
+  );
+  await enqueueSync('caffeine_log', id, 'insert', { localDate, drinkName, caffeineMg, amountMl, consumedAt });
+  return id;
+}
+
+export async function deleteLatestCaffeineLog(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<boolean> {
+  const db = await getDatabase();
+  const latestDiary = await db.getFirstAsync<{ id: string }>(
+    `SELECT e.id
+     FROM diary_days d
+     JOIN diary_entries e ON e.diary_day_id = d.id AND e.deleted_at IS NULL
+     JOIN food_items f ON f.id = e.food_item_id AND f.deleted_at IS NULL
+     WHERE d.user_id = ?
+       AND d.local_date = ?
+       AND d.deleted_at IS NULL
+       AND COALESCE(f.caffeine_mg_per_can, 0) > 0
+     ORDER BY e.logged_at DESC
+     LIMIT 1`,
+    [userId, localDate],
+  );
+  const latestLegacy = await db.getFirstAsync<{ id: string; consumed_at: string }>(
+    `SELECT id, consumed_at
+     FROM caffeine_logs
+     WHERE user_id = ? AND local_date = ? AND deleted_at IS NULL
+     ORDER BY consumed_at DESC
+     LIMIT 1`,
+    [userId, localDate],
+  );
+  if (!latestDiary?.id && !latestLegacy?.id) {
+    return false;
+  }
+
+  if (latestDiary?.id && !latestLegacy?.id) {
+    await deleteDiaryEntry(latestDiary.id);
+    return true;
+  }
+  if (!latestDiary?.id && latestLegacy?.id) {
+    const now = new Date().toISOString();
+    await db.runAsync(
+      `UPDATE caffeine_logs
+       SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+       WHERE id = ?`,
+      [now, now, latestLegacy.id],
+    );
+    await enqueueSync('caffeine_log', latestLegacy.id, 'delete', { id: latestLegacy.id });
+    return true;
+  }
+
+  const latestDiaryAt = await db.getFirstAsync<{ logged_at: string }>(
+    `SELECT logged_at
+     FROM diary_entries
+     WHERE id = ?`,
+    [latestDiary!.id],
+  );
+  const diaryTime = latestDiaryAt?.logged_at ? new Date(latestDiaryAt.logged_at).getTime() : 0;
+  const legacyTime = latestLegacy?.consumed_at ? new Date(latestLegacy.consumed_at).getTime() : 0;
+  if (diaryTime >= legacyTime) {
+    await deleteDiaryEntry(latestDiary!.id);
+    return true;
+  }
+
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE caffeine_logs
+     SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
+     WHERE id = ?`,
+    [now, now, latestLegacy!.id],
+  );
+  await enqueueSync('caffeine_log', latestLegacy!.id, 'delete', { id: latestLegacy!.id });
+  return true;
 }
 
 export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_ID, itemType: FoodItemType = 'food'): Promise<string> {

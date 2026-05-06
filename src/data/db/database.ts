@@ -586,6 +586,20 @@ CREATE TABLE IF NOT EXISTS water_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_water_logs_user_date ON water_logs(user_id, local_date);
 
+CREATE TABLE IF NOT EXISTS caffeine_logs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  drink_name TEXT NOT NULL,
+  caffeine_mg REAL NOT NULL,
+  amount_ml REAL,
+  consumed_at TEXT NOT NULL,
+  ${auditColumns},
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_caffeine_logs_user_date ON caffeine_logs(user_id, local_date);
+CREATE INDEX IF NOT EXISTS idx_caffeine_logs_user_consumed_at ON caffeine_logs(user_id, consumed_at);
+
 CREATE TABLE IF NOT EXISTS progress_widgets (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

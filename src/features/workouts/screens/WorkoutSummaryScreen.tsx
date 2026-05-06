@@ -3,7 +3,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Check, ChevronDown, ChevronRight, ChevronUp, Circle, Clock, Dumbbell, Flame, History, Pencil, Plus, Trash2, Trophy, Weight, Calendar } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronRight, ChevronUp, Circle, Clock, Dumbbell, EllipsisVertical, Flame, History, Pencil, Plus, Trash2, Trophy, Weight, Calendar } from 'lucide-react-native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
@@ -18,7 +18,9 @@ import {
 import { calculateWorkoutVolume } from '@/domain/calculations/workout';
 import { Exercise, SetType, WorkoutExercise, WorkoutSession, WorkoutSet } from '@/domain/models';
 import { ExercisePickerSheet } from '@/features/workouts/components/live/ExercisePickerSheet';
+import { SetLoggingTable } from '@/features/workouts/components/live/SetLoggingTable';
 import { SetTypeMenu } from '@/features/workouts/components/live/SetTypeMenu';
+import { WorkoutKeyboard } from '@/features/workouts/components/live/WorkoutKeyboard';
 import { useExercises, useRecentWorkouts, useWorkoutSession } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
@@ -26,6 +28,8 @@ import { useAppTheme } from '@/theme/theme';
 
 type Route = RouteProp<RootStackParamList, 'WorkoutSummary'>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+type EditableField = 'weightKg' | 'reps';
+type MetadataEditorMode = 'name' | 'time' | 'note' | null;
 
 type PickerMode =
   | { kind: 'add' }
@@ -72,7 +76,6 @@ export function WorkoutSummaryScreen() {
   const navigation = useNavigation<Nav>();
   const queryClient = useQueryClient();
   const sessionId = route.params.sessionId;
-  const startInEdit = Boolean(route.params.startInEdit);
 
   const session = useWorkoutSession(sessionId);
   const exercises = useExercises();
@@ -84,6 +87,8 @@ export function WorkoutSummaryScreen() {
   const [pickerMode, setPickerMode] = useState<PickerMode>(null);
   const [pickerSelectedIds, setPickerSelectedIds] = useState<Set<string>>(new Set());
   const [setTypeTarget, setSetTypeTarget] = useState<{ exerciseLocalId: string; setLocalId: string } | null>(null);
+  const [activeInput, setActiveInput] = useState<{ setLocalId: string; field: EditableField } | null>(null);
+  const [metadataEditor, setMetadataEditor] = useState<MetadataEditorMode>(null);
   const [hasAppliedAutoEdit, setHasAppliedAutoEdit] = useState(false);
 
   const exerciseById = useMemo(() => new Map((exercises.data ?? []).map((item) => [item.id, item])), [exercises.data]);
@@ -154,6 +159,8 @@ export function WorkoutSummaryScreen() {
   const discardEditingState = useCallback(() => {
     closePicker();
     setSetTypeTarget(null);
+    setActiveInput(null);
+    setMetadataEditor(null);
     setDraft(null);
     setIsEditing(false);
     setIsDirty(false);
@@ -167,27 +174,39 @@ export function WorkoutSummaryScreen() {
     setIsEditing(true);
     setIsDirty(false);
     closePicker();
+    setActiveInput(null);
+    setMetadataEditor(null);
     setSetTypeTarget(null);
   }, [closePicker, session.data]);
 
   useEffect(() => {
-    if (!startInEdit || hasAppliedAutoEdit || !session.data || isEditing) {
+    if (hasAppliedAutoEdit || !session.data || isEditing) {
       return;
     }
     startEditing();
     setHasAppliedAutoEdit(true);
-  }, [hasAppliedAutoEdit, isEditing, session.data, startEditing, startInEdit]);
+  }, [hasAppliedAutoEdit, isEditing, session.data, startEditing]);
+
+  const returnToHistoryDetails = useCallback(() => {
+    navigation.navigate('MainTabs', {
+      screen: 'Workouts',
+      params: {
+        openHistorySessionId: sessionId,
+        openHistorySessionAt: Date.now(),
+      },
+    });
+  }, [navigation, sessionId]);
 
   const handleCancelEdit = useCallback(() => {
     if (!isDirty) {
-      discardEditingState();
+      returnToHistoryDetails();
       return;
     }
     Alert.alert('Discard changes?', 'Your workout edits have not been saved.', [
       { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: discardEditingState },
+      { text: 'Discard', style: 'destructive', onPress: returnToHistoryDetails },
     ]);
-  }, [discardEditingState, isDirty]);
+  }, [isDirty, returnToHistoryDetails]);
 
   const saveMutation = useMutation({
     mutationFn: (input: UpdateCompletedWorkoutInput) => updateCompletedWorkoutSession(input),
@@ -215,8 +234,7 @@ export function WorkoutSummaryScreen() {
           );
         },
       });
-      discardEditingState();
-      Alert.alert('Workout updated', 'The completed workout has been updated.');
+      returnToHistoryDetails();
     },
     onError: (error) => {
       Alert.alert('Update workout', error instanceof Error ? error.message : 'Unable to update workout.');
@@ -330,54 +348,34 @@ export function WorkoutSummaryScreen() {
     };
 
     saveMutation.mutate(payload);
-  }, [draft, saveMutation, sessionId]);
+  }, [draft, returnToHistoryDetails, saveMutation, sessionId]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: isEditing ? 'Edit Workout' : 'Workout Summary',
+      title: 'Edit Workout',
       headerTitleAlign: 'center',
       headerShadowVisible: false,
       headerStyle: {
         backgroundColor: theme.colors.background,
       },
-      headerBackVisible: !isEditing,
-      gestureEnabled: !isEditing,
-      headerLeft: isEditing
-        ? () => (
-            <Pressable disabled={saveMutation.isPending} onPress={handleCancelEdit} style={({ pressed }) => [{ opacity: saveMutation.isPending ? 0.5 : pressed ? 0.72 : 1 }]}> 
-              <AppText weight="700" style={{ color: theme.colors.muted }}>
-                Cancel
-              </AppText>
-            </Pressable>
-          )
-        : undefined,
-      headerRight: () =>
-        isEditing ? (
-          <Pressable disabled={saveMutation.isPending} onPress={handleSaveEdit} style={({ pressed }) => [{ opacity: saveMutation.isPending ? 0.5 : pressed ? 0.72 : 1 }]}> 
-            <AppText weight="800" style={{ color: theme.colors.primary }}>
-              {saveMutation.isPending ? 'Saving…' : 'Save'}
-            </AppText>
-          </Pressable>
-        ) : (
-          <Pressable
-            onPress={startEditing}
-            style={({ pressed }) => [
-              styles.editHeaderButton,
-              {
-                borderColor: 'rgba(53,199,122,0.35)',
-                backgroundColor: 'rgba(53,199,122,0.12)',
-                opacity: pressed ? 0.8 : 1,
-              },
-            ]}
-          > 
-            <Pencil size={14} color={theme.colors.primary} />
-            <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
-              Edit
-            </AppText>
-          </Pressable>
-        ),
+      headerBackVisible: false,
+      gestureEnabled: false,
+      headerLeft: () => (
+        <Pressable disabled={saveMutation.isPending} onPress={handleCancelEdit} style={({ pressed }) => [{ opacity: saveMutation.isPending ? 0.5 : pressed ? 0.72 : 1 }]}> 
+          <AppText weight="700" style={{ color: theme.colors.muted }}>
+            Cancel
+          </AppText>
+        </Pressable>
+      ),
+      headerRight: () => (
+        <Pressable disabled={saveMutation.isPending} onPress={handleSaveEdit} style={({ pressed }) => [{ opacity: saveMutation.isPending ? 0.5 : pressed ? 0.72 : 1 }]}> 
+          <AppText weight="800" style={{ color: theme.colors.primary }}>
+            {saveMutation.isPending ? 'Saving…' : 'Save'}
+          </AppText>
+        </Pressable>
+      ),
     });
-  }, [handleCancelEdit, handleSaveEdit, isEditing, navigation, saveMutation.isPending, startEditing, theme.colors.background, theme.colors.muted, theme.colors.primary]);
+  }, [handleCancelEdit, handleSaveEdit, navigation, saveMutation.isPending, theme.colors.background, theme.colors.muted, theme.colors.primary]);
 
   const toggleSetCompleted = useCallback((exerciseLocalId: string, setLocalId: string) => {
     updateDraft((current) => ({
@@ -422,6 +420,182 @@ export function WorkoutSummaryScreen() {
     const minutes = totalMinutes % 60;
     return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
   }, [draft]);
+
+  const editTableExercises = useMemo<WorkoutExercise[]>(() => {
+    if (!draft || !session.data) {
+      return [];
+    }
+    return draft.exercises.map((exercise, exerciseIndex) => ({
+      id: exercise.localId,
+      workoutSessionId: sessionId,
+      exerciseId: exercise.exerciseId,
+      exercise: {
+        id: exercise.exerciseId,
+        userId: session.data.userId,
+        name: exercise.name,
+        primaryMuscle: exercise.primaryMuscle || 'Body',
+        equipment: exercise.equipment || 'Equipment',
+        instructions: null,
+        isCustom: false,
+      },
+      sortOrder: exerciseIndex + 1,
+      supersetGroup: null,
+      notes: exercise.notes || null,
+      createdAt: session.data.createdAt,
+      updatedAt: session.data.updatedAt,
+      deletedAt: null,
+      syncStatus: 'pending',
+      version: 1,
+      sets: exercise.sets.map((set, setIndex) => ({
+        id: set.localId,
+        workoutExerciseId: exercise.localId,
+        sortOrder: setIndex + 1,
+        setType: set.setType,
+        weightKg: parseDraftDecimal(set.weightKg),
+        reps: parseDraftInteger(set.reps),
+        durationSeconds: parseDraftInteger(set.durationSeconds),
+        distanceMeters: parseDraftDecimal(set.distanceMeters),
+        rpe: parseDraftDecimal(set.rpe),
+        rir: parseDraftDecimal(set.rir),
+        isCompleted: set.isCompleted,
+        completedAt: set.isCompleted ? set.completedAt ?? session.data.endedAt ?? new Date().toISOString() : null,
+        previousWeightKg: null,
+        previousReps: null,
+        createdAt: session.data.createdAt,
+        updatedAt: session.data.updatedAt,
+        deletedAt: null,
+        syncStatus: 'pending',
+        version: 1,
+      })),
+    }));
+  }, [draft, session.data, sessionId]);
+
+  const tableDraftBySetId = useMemo<Record<string, { weightKg: string; reps: string; rpe: string }>>(() => {
+    if (!draft) {
+      return {};
+    }
+    const map: Record<string, { weightKg: string; reps: string; rpe: string }> = {};
+    for (const exercise of draft.exercises) {
+      for (const set of exercise.sets) {
+        map[set.localId] = {
+          weightKg: set.weightKg,
+          reps: set.reps,
+          rpe: set.rpe,
+        };
+      }
+    }
+    return map;
+  }, [draft]);
+
+  const inputOrder = useMemo(() => {
+    if (!draft) {
+      return [] as Array<{ setLocalId: string; field: EditableField }>;
+    }
+    return draft.exercises.flatMap((exercise) =>
+      exercise.sets.flatMap((set) => [
+        { setLocalId: set.localId, field: 'weightKg' as const },
+        { setLocalId: set.localId, field: 'reps' as const },
+      ]),
+    );
+  }, [draft]);
+
+  const updateSetFieldByLocalId = useCallback(
+    (setLocalId: string, field: EditableField | 'rpe', updater: (value: string) => string) => {
+      updateDraft((current) => ({
+        ...current,
+        exercises: current.exercises.map((exercise) => ({
+          ...exercise,
+          sets: exercise.sets.map((set) =>
+            set.localId !== setLocalId
+              ? set
+              : {
+                  ...set,
+                  [field]:
+                    field === 'weightKg' || field === 'rpe'
+                      ? sanitizeDecimalInput(updater(set[field]))
+                      : sanitizeIntegerInput(updater(set[field])),
+                },
+          ),
+        })),
+      }));
+    },
+    [updateDraft],
+  );
+
+  const handleDigit = useCallback(
+    (digit: string) => {
+      if (!activeInput) {
+        return;
+      }
+      updateSetFieldByLocalId(activeInput.setLocalId, activeInput.field, (value) => `${value}${digit}`);
+    },
+    [activeInput, updateSetFieldByLocalId],
+  );
+
+  const handleDecimal = useCallback(() => {
+    if (!activeInput || activeInput.field !== 'weightKg') {
+      return;
+    }
+    updateSetFieldByLocalId(activeInput.setLocalId, 'weightKg', (value) => (value.includes('.') ? value : `${value}.`));
+  }, [activeInput, updateSetFieldByLocalId]);
+
+  const handleBackspace = useCallback(() => {
+    if (!activeInput) {
+      return;
+    }
+    updateSetFieldByLocalId(activeInput.setLocalId, activeInput.field, (value) => value.slice(0, -1));
+  }, [activeInput, updateSetFieldByLocalId]);
+
+  const handleStep = useCallback(
+    (delta: number) => {
+      if (!activeInput) {
+        return;
+      }
+      updateSetFieldByLocalId(activeInput.setLocalId, activeInput.field, (value) => {
+        const parsed = Number.parseFloat(value.replace(',', '.'));
+        const next = Number.isFinite(parsed) ? parsed + delta : delta;
+        if (activeInput.field === 'reps') {
+          return String(Math.max(0, Math.round(next)));
+        }
+        return formatNumber(Math.max(0, Math.round(next * 10) / 10));
+      });
+    },
+    [activeInput, updateSetFieldByLocalId],
+  );
+
+  const handleNextInput = useCallback(() => {
+    if (!activeInput) {
+      return;
+    }
+    const currentIndex = inputOrder.findIndex(
+      (item) => item.setLocalId === activeInput.setLocalId && item.field === activeInput.field,
+    );
+    if (currentIndex < 0 || currentIndex === inputOrder.length - 1) {
+      setActiveInput(null);
+      return;
+    }
+    setActiveInput(inputOrder[currentIndex + 1]);
+  }, [activeInput, inputOrder]);
+
+  const handleRpeShortcut = useCallback(() => {
+    if (!activeInput) {
+      return;
+    }
+    const currentRpe = tableDraftBySetId[activeInput.setLocalId]?.rpe;
+    const nextRpe = currentRpe ? Number.parseFloat(currentRpe) || 8 : 8;
+    const bounded = String(Math.max(6, Math.min(10, nextRpe)));
+    updateSetFieldByLocalId(activeInput.setLocalId, 'rpe', () => bounded);
+  }, [activeInput, tableDraftBySetId, updateSetFieldByLocalId]);
+
+  const openWorkoutOptionsMenu = useCallback(() => {
+    Alert.alert('Workout options', 'Choose an action', [
+      { text: 'Edit workout name', onPress: () => setMetadataEditor('name') },
+      { text: 'Adjust start/end time', onPress: () => setMetadataEditor('time') },
+      { text: 'Add photo', onPress: () => Alert.alert('Add photo', 'Photo attachments are coming soon.') },
+      { text: 'Add note', onPress: () => setMetadataEditor('note') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, []);
 
   if (session.isLoading || !session.data) {
     return <LoadingState label="Summarizing workout" />;
@@ -503,268 +677,228 @@ export function WorkoutSummaryScreen() {
 
   return (
     <>
-      <Screen>
-        {!isEditing || !draft ? (
-          <>
-            <LinearGradient
-              colors={['rgba(26,34,44,0.98)', 'rgba(21,29,38,0.98)', 'rgba(15,22,30,0.98)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.heroCard, { borderColor: theme.colors.border }]}
-            >
-              <View style={styles.heroGlowOrbTop} pointerEvents="none" />
-              <View style={styles.heroGlowOrbBottom} pointerEvents="none" />
-              <View style={styles.heroSubtleLine} pointerEvents="none" />
-
-              <View style={styles.heroTopRow}>
-                <View style={[styles.heroWorkoutBadge, { borderColor: 'rgba(53,199,122,0.36)', backgroundColor: 'rgba(53,199,122,0.14)' }]}>
-                  <Dumbbell size={16} color={theme.colors.primary} />
-                  <AppText variant="small" weight="700" style={{ color: theme.colors.primary }}>
-                    Completed
-                  </AppText>
-                </View>
-                <View style={[styles.heroMetaPill, { borderColor: theme.colors.border, backgroundColor: 'rgba(255,255,255,0.04)' }]}>
-                  <Calendar size={13} color={theme.colors.muted} />
-                  <AppText variant="small" muted>
-                    Summary
-                  </AppText>
-                </View>
-              </View>
-
-              <View style={styles.heroTitleBlock}>
-                <AppText variant="title" numberOfLines={2} style={styles.heroTitle}>
-                  {session.data.title}
-                </AppText>
-                <AppText muted style={styles.heroDateLabel}>
-                  {workoutDateLabel}
-                </AppText>
-                {session.data.notes ? (
-                  <AppText muted variant="small" numberOfLines={2} style={styles.heroNotes}>
-                    {session.data.notes}
-                  </AppText>
-                ) : null}
-              </View>
-
-              <View style={styles.heroStatsGrid}>
-                <SummaryStatTile icon={Clock} label="Duration" value={workoutDurationLabel} />
-                <SummaryStatTile icon={Check} label="Sets" value={`${summaryMetrics.completedSets}/${summaryMetrics.totalSets}`} />
-                <SummaryStatTile icon={Dumbbell} label="Reps" value={String(summaryMetrics.totalReps)} />
-                <SummaryStatTile icon={Weight} label="Volume" value={`${Math.round(summaryMetrics.totalVolumeKg)} kg`} />
-              </View>
-
-              <View style={[styles.heroMuscleRow, { borderColor: 'rgba(53,199,122,0.24)', backgroundColor: 'rgba(53,199,122,0.08)' }]}>
-                <Flame size={14} color={theme.colors.primary} />
-                <AppText muted variant="small" numberOfLines={1} style={styles.heroMuscleLabel}>
-                  {muscleGroupsLabel}
-                </AppText>
-              </View>
-            </LinearGradient>
-
-            <Card style={styles.summarySectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionIconWrap, { borderColor: 'rgba(53,199,122,0.3)', backgroundColor: 'rgba(53,199,122,0.12)' }]}>
-                    <Dumbbell size={14} color={theme.colors.primary} />
-                  </View>
-                  <AppText variant="section">Exercises completed</AppText>
-                </View>
-                <AppText muted variant="small">
-                  {session.data.exercises.length}
-                </AppText>
-              </View>
-
-              {session.data.exercises.length ? (
-                session.data.exercises.map((exercise) => {
-                  const completedSets = exercise.sets.filter((set) => set.isCompleted).length;
-                  return (
-                    <Pressable
-                      key={exercise.id}
-                      onPress={() => navigation.navigate('ExerciseHistory', { exerciseId: exercise.exerciseId })}
-                      style={({ pressed }) => [
-                        styles.exerciseSummaryRow,
-                        {
-                          borderColor: theme.colors.border,
-                          backgroundColor: theme.colors.surfaceAlt,
-                          opacity: pressed ? 0.84 : 1,
-                        },
-                      ]}
-                    >
-                      <View style={[styles.exerciseSummaryIcon, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
-                        <Dumbbell size={15} color={theme.colors.primary} />
-                      </View>
-                      <View style={styles.exerciseSummaryCopy}>
-                        <AppText weight="800" numberOfLines={1}>
-                          {exercise.exercise?.name ?? 'Exercise'}
-                        </AppText>
-                        <AppText muted variant="small" numberOfLines={1}>
-                          {exercise.exercise?.primaryMuscle ?? 'Body'} • {exercise.exercise?.equipment ?? 'Equipment'}
-                        </AppText>
-                      </View>
-                      <View style={styles.exerciseSummaryMeta}>
-                        <AppText weight="800">{completedSets}</AppText>
-                        <AppText muted variant="small">
-                          sets
-                        </AppText>
-                      </View>
-                      <ChevronRight size={16} color={theme.colors.muted} />
-                    </Pressable>
-                  );
-                })
-              ) : (
-                <View style={[styles.emptySummaryState, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                  <AppText muted>No exercises logged for this workout.</AppText>
-                </View>
-              )}
-            </Card>
-
-            <Card style={styles.summarySectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionIconWrap, { borderColor: 'rgba(53,199,122,0.3)', backgroundColor: 'rgba(53,199,122,0.12)' }]}>
-                    <Trophy size={14} color={theme.colors.primary} />
-                  </View>
-                  <AppText variant="section">PRs</AppText>
-                </View>
-                <AppText muted variant="small">
-                  {summaryMetrics.prs.length}
-                </AppText>
-              </View>
-
-              {summaryMetrics.prs.length ? (
-                summaryMetrics.prs.map((pr, index) => (
-                  <View key={`${pr.label}-${index}`} style={[styles.prSummaryRow, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                    <View style={styles.prSummaryLabelWrap}>
-                      <AppText weight="700">{pr.label}</AppText>
-                    </View>
-                    <AppText weight="800" style={{ color: theme.colors.primary }}>
-                      {pr.value}
-                    </AppText>
-                  </View>
-                ))
-              ) : (
-                <View style={[styles.emptySummaryState, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                  <AppText muted>No new PRs this session.</AppText>
-                </View>
-              )}
-            </Card>
-          </>
+      <Screen backgroundVariant="plain" safeAreaEdges={['left', 'right']} contentInsetAdjustmentBehavior="never">
+        {!draft ? (
+          <LoadingState label="Opening workout editor" />
         ) : (
           <>
-            <Card style={{ borderColor: theme.colors.primary }}>
-              <View style={styles.editingBanner}>
-                <Pencil size={14} color={theme.colors.primary} />
-                <AppText weight="700" style={{ color: theme.colors.primary }}>
+            <Card
+              style={{
+                ...styles.editorSurfaceCard,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              }}
+            >
+              <View style={styles.editorHeaderRow}>
+                <View style={styles.grow}>
+                  <AppText variant="section" weight="800" numberOfLines={1}>
+                    {draft.title}
+                  </AppText>
+                  <AppText muted variant="small" numberOfLines={1}>
+                    {draft.date} • {draft.startTime} - {draft.endTime}
+                  </AppText>
+                </View>
+                <Pressable
+                  onPress={openWorkoutOptionsMenu}
+                  style={({ pressed }) => [
+                    styles.editorMenuButton,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.8 : 1 },
+                  ]}
+                >
+                  <EllipsisVertical size={16} color={theme.colors.text} />
+                </Pressable>
+              </View>
+
+              <View style={styles.editorMetaRow}>
+                <AppText muted variant="small">
                   Editing completed workout
                 </AppText>
-              </View>
-              <AppText muted variant="small">
-                Save updates title, date/time, exercises, sets, and stats calculations.
-              </AppText>
-            </Card>
-
-            <Card>
-              <AppText variant="section">Workout details</AppText>
-              <View style={styles.formGroup}>
                 <AppText muted variant="small">
-                  Workout name
+                  Duration {durationPreview}
                 </AppText>
-                <TextInput
-                  value={draft.title}
-                  onChangeText={(value) => updateDraft((current) => ({ ...current, title: value }))}
-                  placeholder="Workout name"
-                  placeholderTextColor={theme.colors.muted}
-                  style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}
-                />
               </View>
 
-              <View style={styles.rowTwo}>
-                <View style={styles.rowField}>
+              {metadataEditor === 'name' ? (
+                <View style={styles.formGroup}>
                   <AppText muted variant="small">
-                    Date (YYYY-MM-DD)
+                    Workout name
                   </AppText>
                   <TextInput
-                    value={draft.date}
-                    onChangeText={(value) => updateDraft((current) => ({ ...current, date: sanitizeDateInput(value) }))}
-                    keyboardType="numbers-and-punctuation"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder="2026-05-04"
+                    value={draft.title}
+                    onChangeText={(value) => updateDraft((current) => ({ ...current, title: value }))}
+                    placeholder="Workout name"
                     placeholderTextColor={theme.colors.muted}
-                    style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}
+                    style={[
+                      styles.textInput,
+                      { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+                    ]}
                   />
                 </View>
-                <View style={styles.rowField}>
-                  <AppText muted variant="small">
-                    Duration
-                  </AppText>
-                  <View style={[styles.metricValueWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}> 
-                    <Clock size={14} color={theme.colors.muted} />
-                    <AppText weight="700">{durationPreview}</AppText>
+              ) : null}
+
+              {metadataEditor === 'time' ? (
+                <>
+                  <View style={styles.rowTwo}>
+                    <View style={styles.rowField}>
+                      <AppText muted variant="small">
+                        Date (YYYY-MM-DD)
+                      </AppText>
+                      <TextInput
+                        value={draft.date}
+                        onChangeText={(value) => updateDraft((current) => ({ ...current, date: sanitizeDateInput(value) }))}
+                        keyboardType="numbers-and-punctuation"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder="2026-05-04"
+                        placeholderTextColor={theme.colors.muted}
+                        style={[
+                          styles.textInput,
+                          { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+                        ]}
+                      />
+                    </View>
+                    <View style={styles.rowField}>
+                      <AppText muted variant="small">
+                        Duration
+                      </AppText>
+                      <View style={[styles.metricValueWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                        <Clock size={14} color={theme.colors.muted} />
+                        <AppText weight="700">{durationPreview}</AppText>
+                      </View>
+                    </View>
                   </View>
-                </View>
-              </View>
 
-              <View style={styles.rowTwo}>
-                <View style={styles.rowField}>
+                  <View style={styles.rowTwo}>
+                    <View style={styles.rowField}>
+                      <AppText muted variant="small">
+                        Start (HH:mm)
+                      </AppText>
+                      <TextInput
+                        value={draft.startTime}
+                        onChangeText={(value) => updateDraft((current) => ({ ...current, startTime: sanitizeTimeInput(value) }))}
+                        keyboardType="numbers-and-punctuation"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder="07:30"
+                        placeholderTextColor={theme.colors.muted}
+                        style={[
+                          styles.textInput,
+                          { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+                        ]}
+                      />
+                    </View>
+                    <View style={styles.rowField}>
+                      <AppText muted variant="small">
+                        End (HH:mm)
+                      </AppText>
+                      <TextInput
+                        value={draft.endTime}
+                        onChangeText={(value) => updateDraft((current) => ({ ...current, endTime: sanitizeTimeInput(value) }))}
+                        keyboardType="numbers-and-punctuation"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder="09:00"
+                        placeholderTextColor={theme.colors.muted}
+                        style={[
+                          styles.textInput,
+                          { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                </>
+              ) : null}
+
+              {metadataEditor === 'note' ? (
+                <View style={styles.formGroup}>
                   <AppText muted variant="small">
-                    Start (HH:mm)
+                    Note
                   </AppText>
                   <TextInput
-                    value={draft.startTime}
-                    onChangeText={(value) => updateDraft((current) => ({ ...current, startTime: sanitizeTimeInput(value) }))}
-                    keyboardType="numbers-and-punctuation"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder="07:30"
+                    value={draft.notes}
+                    onChangeText={(value) => updateDraft((current) => ({ ...current, notes: value }))}
+                    placeholder="Session note"
                     placeholderTextColor={theme.colors.muted}
-                    style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}
+                    multiline
+                    textAlignVertical="top"
+                    style={[
+                      styles.textInput,
+                      styles.notesInput,
+                      { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+                    ]}
                   />
                 </View>
-                <View style={styles.rowField}>
-                  <AppText muted variant="small">
-                    End (HH:mm)
-                  </AppText>
-                  <TextInput
-                    value={draft.endTime}
-                    onChangeText={(value) => updateDraft((current) => ({ ...current, endTime: sanitizeTimeInput(value) }))}
-                    keyboardType="numbers-and-punctuation"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder="09:00"
-                    placeholderTextColor={theme.colors.muted}
-                    style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}
-                  />
-                </View>
-              </View>
+              ) : null}
 
-              <View style={styles.formGroup}>
-                <AppText muted variant="small">
-                  Notes (optional)
+              <Pressable
+                onPress={openAddExercisePicker}
+                style={({ pressed }) => [
+                  styles.addExerciseButtonInline,
+                  {
+                    borderColor: 'rgba(95,220,151,0.42)',
+                    backgroundColor: 'rgba(53,199,122,0.14)',
+                    opacity: pressed ? 0.82 : 1,
+                  },
+                ]}
+              >
+                <Plus size={15} color={theme.colors.primary} />
+                <AppText weight="700" style={{ color: theme.colors.primary }}>
+                  Add exercises
                 </AppText>
-                <TextInput
-                  value={draft.notes}
-                  onChangeText={(value) => updateDraft((current) => ({ ...current, notes: value }))}
-                  placeholder="Session notes"
-                  placeholderTextColor={theme.colors.muted}
-                  multiline
-                  textAlignVertical="top"
-                  style={[
-                    styles.textInput,
-                    styles.notesInput,
-                    { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
-                  ]}
-                />
-              </View>
+              </Pressable>
             </Card>
 
-            <Card>
-              <View style={styles.spaceBetween}>
-                <View>
-                  <AppText variant="section">Exercises</AppText>
-                  <AppText muted variant="small">
-                    {draft.exercises.length} exercise{draft.exercises.length === 1 ? '' : 's'}
-                  </AppText>
-                </View>
+            {editTableExercises.length ? (
+              <SetLoggingTable
+                exercises={editTableExercises}
+                draftBySetId={tableDraftBySetId}
+                activeInput={activeInput ? { setId: activeInput.setLocalId, field: activeInput.field } : null}
+                onSelectInput={(setId, field) => setActiveInput({ setLocalId: setId, field })}
+                onOpenSetTypeMenu={(setId) => {
+                  const targetExercise = draft.exercises.find((exercise) => exercise.sets.some((set) => set.localId === setId));
+                  if (!targetExercise) {
+                    return;
+                  }
+                  setSetTypeTarget({ exerciseLocalId: targetExercise.localId, setLocalId: setId });
+                }}
+                onToggleSetComplete={(setId) => {
+                  const ownerExercise = draft.exercises.find((exercise) => exercise.sets.some((set) => set.localId === setId));
+                  if (!ownerExercise) {
+                    return;
+                  }
+                  toggleSetCompleted(ownerExercise.localId, setId);
+                }}
+                onAddSet={(exerciseLocalId) =>
+                  updateDraft((current) => ({
+                    ...current,
+                    exercises: current.exercises.map((exercise) =>
+                      exercise.localId !== exerciseLocalId ? exercise : { ...exercise, sets: [...exercise.sets, createSetDraft()] },
+                    ),
+                  }))
+                }
+                onOpenHistory={(exerciseId) => navigation.navigate('ExerciseHistory', { exerciseId })}
+                onOpenExerciseMenu={(exerciseLocalId) => {
+                  Alert.alert('Exercise actions', 'Choose action', [
+                    {
+                      text: 'Replace',
+                      onPress: () => openReplaceExercisePicker(exerciseLocalId),
+                    },
+                    {
+                      text: 'Remove',
+                      style: 'destructive',
+                      onPress: () =>
+                        updateDraft((current) => ({
+                          ...current,
+                          exercises: current.exercises.filter((exercise) => exercise.localId !== exerciseLocalId),
+                        })),
+                    },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
+                }}
+              />
+            ) : (
+              <View style={[styles.emptyExerciseState, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                <AppText muted>No exercises in this workout.</AppText>
                 <Pressable
                   onPress={openAddExercisePicker}
                   style={({ pressed }) => [
@@ -782,350 +916,7 @@ export function WorkoutSummaryScreen() {
                   </AppText>
                 </Pressable>
               </View>
-
-              {draft.exercises.length ? (
-                draft.exercises.map((exercise, exerciseIndex) => (
-                  <View key={exercise.localId} style={[styles.exerciseCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}> 
-                    <View style={styles.exerciseCardHeader}>
-                      <View style={styles.grow}>
-                        <AppText weight="800" style={styles.exerciseName}>
-                          {exercise.name}
-                        </AppText>
-                        <AppText muted variant="small">
-                          {exercise.primaryMuscle || 'Body'} • {exercise.equipment || 'Equipment'}
-                        </AppText>
-                      </View>
-                      <View style={styles.iconActionRow}>
-                        <IconActionButton
-                          icon={History}
-                          onPress={() => navigation.navigate('ExerciseHistory', { exerciseId: exercise.exerciseId })}
-                        />
-                        <IconActionButton icon={Pencil} onPress={() => openReplaceExercisePicker(exercise.localId)} />
-                        <IconActionButton
-                          icon={ChevronUp}
-                          disabled={exerciseIndex === 0}
-                          onPress={() =>
-                            updateDraft((current) => ({
-                              ...current,
-                              exercises: swapItems(current.exercises, exerciseIndex, exerciseIndex - 1),
-                            }))
-                          }
-                        />
-                        <IconActionButton
-                          icon={ChevronDown}
-                          disabled={exerciseIndex === draft.exercises.length - 1}
-                          onPress={() =>
-                            updateDraft((current) => ({
-                              ...current,
-                              exercises: swapItems(current.exercises, exerciseIndex, exerciseIndex + 1),
-                            }))
-                          }
-                        />
-                        <IconActionButton
-                          icon={Trash2}
-                          tone="danger"
-                          onPress={() =>
-                            Alert.alert('Remove exercise?', 'This deletes the exercise and all of its sets from this workout.', [
-                              { text: 'Keep', style: 'cancel' },
-                              {
-                                text: 'Remove',
-                                style: 'destructive',
-                                onPress: () =>
-                                  updateDraft((current) => ({
-                                    ...current,
-                                    exercises: current.exercises.filter((item) => item.localId !== exercise.localId),
-                                  })),
-                              },
-                            ])
-                          }
-                        />
-                      </View>
-                    </View>
-
-                    <View style={styles.formGroup}>
-                      <AppText muted variant="small">
-                        Exercise notes (optional)
-                      </AppText>
-                      <TextInput
-                        value={exercise.notes}
-                        onChangeText={(value) =>
-                          updateDraft((current) => ({
-                            ...current,
-                            exercises: current.exercises.map((item) =>
-                              item.localId === exercise.localId ? { ...item, notes: value } : item,
-                            ),
-                          }))
-                        }
-                        placeholder="Notes for this exercise"
-                        placeholderTextColor={theme.colors.muted}
-                        style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
-                      />
-                    </View>
-
-                    {exercise.sets.map((set, setIndex) => (
-                      <View key={set.localId} style={[styles.setCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}> 
-                        <View style={styles.setTopRow}>
-                          <Pressable
-                            onPress={() => setSetTypeTarget({ exerciseLocalId: exercise.localId, setLocalId: set.localId })}
-                            style={({ pressed }) => [
-                              styles.setTypePill,
-                              {
-                                borderColor: theme.colors.border,
-                                backgroundColor: theme.colors.surfaceAlt,
-                                opacity: pressed ? 0.82 : 1,
-                              },
-                            ]}
-                          >
-                            <AppText variant="small" weight="700">
-                              {setTypeLabel(set.setType)}
-                            </AppText>
-                          </Pressable>
-
-                          <AppText muted variant="small">
-                            Set {setIndex + 1}
-                          </AppText>
-
-                          <Pressable
-                            onPress={() => toggleSetCompleted(exercise.localId, set.localId)}
-                            style={({ pressed }) => [styles.completedToggle, { opacity: pressed ? 0.82 : 1 }]}
-                          >
-                            {set.isCompleted ? <Check size={16} color={theme.colors.primary} /> : <Circle size={16} color={theme.colors.muted} />}
-                            <AppText muted variant="small">
-                              Done
-                            </AppText>
-                          </Pressable>
-
-                          <View style={styles.iconActionRow}>
-                            <IconActionButton
-                              icon={ChevronUp}
-                              disabled={setIndex === 0}
-                              onPress={() =>
-                                updateDraft((current) => ({
-                                  ...current,
-                                  exercises: current.exercises.map((item) =>
-                                    item.localId !== exercise.localId
-                                      ? item
-                                      : { ...item, sets: swapItems(item.sets, setIndex, setIndex - 1) },
-                                  ),
-                                }))
-                              }
-                            />
-                            <IconActionButton
-                              icon={ChevronDown}
-                              disabled={setIndex === exercise.sets.length - 1}
-                              onPress={() =>
-                                updateDraft((current) => ({
-                                  ...current,
-                                  exercises: current.exercises.map((item) =>
-                                    item.localId !== exercise.localId
-                                      ? item
-                                      : { ...item, sets: swapItems(item.sets, setIndex, setIndex + 1) },
-                                  ),
-                                }))
-                              }
-                            />
-                            <IconActionButton
-                              icon={Trash2}
-                              tone="danger"
-                              onPress={() =>
-                                updateDraft((current) => ({
-                                  ...current,
-                                  exercises: current.exercises.map((item) =>
-                                    item.localId !== exercise.localId
-                                      ? item
-                                      : { ...item, sets: item.sets.filter((entry) => entry.localId !== set.localId) },
-                                  ),
-                                }))
-                              }
-                            />
-                          </View>
-                        </View>
-
-                        <View style={styles.setFieldRow}>
-                          <MiniField
-                            label="Kg"
-                            value={set.weightKg}
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, weightKg: sanitizeDecimalInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                          <MiniField
-                            label="Reps"
-                            value={set.reps}
-                            keyboardType="number-pad"
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, reps: sanitizeIntegerInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                          <MiniField
-                            label="RPE"
-                            value={set.rpe}
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, rpe: sanitizeDecimalInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                        </View>
-
-                        <View style={styles.setFieldRow}>
-                          <MiniField
-                            label="RIR"
-                            value={set.rir}
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, rir: sanitizeDecimalInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                          <MiniField
-                            label="Time (s)"
-                            value={set.durationSeconds}
-                            keyboardType="number-pad"
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, durationSeconds: sanitizeIntegerInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                          <MiniField
-                            label="Dist (m)"
-                            value={set.distanceMeters}
-                            onChangeText={(value) =>
-                              updateDraft((current) => ({
-                                ...current,
-                                exercises: current.exercises.map((item) =>
-                                  item.localId !== exercise.localId
-                                    ? item
-                                    : {
-                                        ...item,
-                                        sets: item.sets.map((entry) =>
-                                          entry.localId === set.localId
-                                            ? { ...entry, distanceMeters: sanitizeDecimalInput(value) }
-                                            : entry,
-                                        ),
-                                      },
-                                ),
-                              }))
-                            }
-                          />
-                        </View>
-                      </View>
-                    ))}
-
-                    <Pressable
-                      onPress={() =>
-                        updateDraft((current) => ({
-                          ...current,
-                          exercises: current.exercises.map((item) =>
-                            item.localId !== exercise.localId
-                              ? item
-                              : { ...item, sets: [...item.sets, createSetDraft()] },
-                          ),
-                        }))
-                      }
-                      style={({ pressed }) => [
-                        styles.addSetButton,
-                        {
-                          borderColor: theme.colors.border,
-                          backgroundColor: theme.colors.surface,
-                          opacity: pressed ? 0.82 : 1,
-                        },
-                      ]}
-                    >
-                      <Plus size={13} color={theme.colors.primary} />
-                      <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
-                        Add set
-                      </AppText>
-                    </Pressable>
-                  </View>
-                ))
-              ) : (
-                <View style={[styles.emptyExerciseState, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}> 
-                  <AppText muted>No exercises in this workout.</AppText>
-                  <Pressable
-                    onPress={openAddExercisePicker}
-                    style={({ pressed }) => [
-                      styles.addPill,
-                      {
-                        borderColor: theme.colors.primary,
-                        backgroundColor: 'rgba(53,199,122,0.12)',
-                        opacity: pressed ? 0.82 : 1,
-                      },
-                    ]}
-                  >
-                    <Plus size={13} color={theme.colors.primary} />
-                    <AppText weight="700" variant="small" style={{ color: theme.colors.primary }}>
-                      Add exercise
-                    </AppText>
-                  </Pressable>
-                </View>
-              )}
-            </Card>
+            )}
           </>
         )}
       </Screen>
@@ -1161,6 +952,17 @@ export function WorkoutSummaryScreen() {
             ),
           }));
         }}
+      />
+
+      <WorkoutKeyboard
+        visible={isEditing && Boolean(activeInput)}
+        activeField={activeInput?.field ?? null}
+        onDigit={handleDigit}
+        onBackspace={handleBackspace}
+        onDecimal={handleDecimal}
+        onStep={handleStep}
+        onRpeShortcut={handleRpeShortcut}
+        onNext={handleNextInput}
       />
     </>
   );
@@ -1473,6 +1275,16 @@ function parseOptionalIntegerField(value: string): number | null | 'invalid' {
     return 'invalid';
   }
   return parsed;
+}
+
+function parseDraftDecimal(value: string): number | null {
+  const parsed = parseOptionalDecimalField(value);
+  return parsed === 'invalid' ? null : parsed;
+}
+
+function parseDraftInteger(value: string): number | null {
+  const parsed = parseOptionalIntegerField(value);
+  return parsed === 'invalid' ? null : parsed;
 }
 
 function formatNumber(value: number): string {
@@ -1866,6 +1678,41 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     gap: 8,
     padding: 12,
+  },
+  editorSurfaceCard: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+    paddingBottom: 12,
+  },
+  editorHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  editorMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  editorMenuButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  addExerciseButtonInline: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    minHeight: 36,
+    paddingHorizontal: 12,
   },
   exerciseRow: {
     alignItems: 'center',

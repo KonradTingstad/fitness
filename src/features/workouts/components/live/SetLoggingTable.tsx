@@ -17,6 +17,7 @@ export interface WorkoutSetDraft {
 interface Props {
   exercises: WorkoutExercise[];
   draftBySetId: Record<string, WorkoutSetDraft>;
+  validationErrorsBySetId?: Record<string, { reps: boolean }>;
   activeInput: { setId: string; field: ActiveInputField } | null;
   onSelectInput: (setId: string, field: ActiveInputField) => void;
   onOpenSetTypeMenu: (setId: string) => void;
@@ -35,6 +36,7 @@ const ROW_CONTENT_HORIZONTAL_PADDING = 14;
 export function SetLoggingTable({
   exercises,
   draftBySetId,
+  validationErrorsBySetId,
   activeInput,
   onSelectInput,
   onOpenSetTypeMenu,
@@ -160,12 +162,14 @@ export function SetLoggingTable({
                     <FieldCell
                       value={draft.weightKg}
                       active={activeInput?.setId === set.id && activeInput.field === 'weightKg'}
+                      invalid={false}
                       onPress={() => onSelectInput(set.id, 'weightKg')}
                     />
 
                     <FieldCell
                       value={draft.reps}
                       active={activeInput?.setId === set.id && activeInput.field === 'reps'}
+                      invalid={Boolean(validationErrorsBySetId?.[set.id]?.reps)}
                       onPress={() => onSelectInput(set.id, 'reps')}
                     />
 
@@ -212,22 +216,30 @@ export function SetLoggingTable({
   );
 }
 
-function FieldCell({ value, active, onPress }: { value: string; active: boolean; onPress: () => void }) {
+function FieldCell({ value, active, invalid, onPress }: { value: string; active: boolean; invalid: boolean; onPress: () => void }) {
   const theme = useAppTheme();
+  const borderColor = invalid ? theme.colors.danger : active ? theme.colors.primary : 'transparent';
+  const borderWidth = invalid || active ? 1 : 0;
+  const backgroundColor = invalid ? 'rgba(242,95,92,0.14)' : theme.colors.surfaceAlt;
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.fieldCell,
         {
-          borderColor: active ? theme.colors.primary : 'transparent',
-          borderWidth: active ? 1 : 0,
-          backgroundColor: theme.colors.surfaceAlt,
+          borderColor,
+          borderWidth,
+          backgroundColor,
           opacity: pressed ? 0.84 : 1,
         },
       ]}
     >
-      <AppText weight="700" style={[styles.fieldValueText, { color: value ? theme.colors.text : theme.colors.muted }]}>
+      <AppText
+        weight="700"
+        numberOfLines={1}
+        ellipsizeMode="clip"
+        style={[styles.fieldValueText, { color: value ? theme.colors.text : theme.colors.muted }]}
+      >
         {value || '-'}
       </AppText>
     </Pressable>

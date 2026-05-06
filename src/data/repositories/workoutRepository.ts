@@ -492,6 +492,17 @@ export async function getRecentWorkouts(userId = DEMO_USER_ID, limit = 10): Prom
   return sessions;
 }
 
+export async function getCompletedWorkoutCount(userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count
+     FROM workout_sessions
+     WHERE user_id = ? AND status = 'completed' AND deleted_at IS NULL`,
+    [userId],
+  );
+  return row?.count ?? 0;
+}
+
 export async function listWorkoutSessionsForRange(
   startLocalDate: string,
   endLocalDate: string,

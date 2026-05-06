@@ -26,6 +26,7 @@ import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorko
 import { EditProgramScreen } from '@/features/workouts/screens/EditProgramScreen';
 import { ExerciseHistoryScreen } from '@/features/workouts/screens/ExerciseHistoryScreen';
 import { LiveWorkoutScreen } from '@/features/workouts/screens/LiveWorkoutScreen';
+import { WorkoutCompletionScreen } from '@/features/workouts/screens/WorkoutCompletionScreen';
 import { TemplateBuilderScreen } from '@/features/workouts/screens/TemplateBuilderScreen';
 import { WorkoutDashboardScreen } from '@/features/workouts/screens/WorkoutDashboardScreen';
 import { WorkoutSummaryScreen } from '@/features/workouts/screens/WorkoutSummaryScreen';
@@ -219,6 +220,7 @@ export function RootNavigator() {
           <>
             <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="LiveWorkout" component={LiveWorkoutScreen} options={{ title: 'Live Workout' }} />
+            <Stack.Screen name="WorkoutCompletion" component={WorkoutCompletionScreen} options={{ headerShown: false }} />
             <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} options={{ title: 'Workout Summary' }} />
             <Stack.Screen name="ExerciseHistory" component={ExerciseHistoryScreen} options={{ title: 'Exercise History' }} />
             <Stack.Screen name="TemplateBuilder" component={TemplateBuilderScreen} options={{ headerShown: false }} />

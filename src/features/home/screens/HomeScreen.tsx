@@ -1,9 +1,9 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Check, ChevronRight, Clock, Droplets, Dumbbell, Plus, User, Utensils, Wheat, X } from 'lucide-react-native';
+import { Check, ChevronRight, Clock, Droplets, Dumbbell, Plus, Search, User, Utensils, Wheat, X } from 'lucide-react-native';
 import { type ElementRef, useCallback, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Animated, {
   Extrapolation,
@@ -19,11 +19,11 @@ import { AppText } from '@/components/AppText';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { LoadingState } from '@/components/LoadingState';
-import { addWater } from '@/data/repositories/nutritionRepository';
+import { addDiaryEntry, deleteLatestCaffeineLog, logManualCaffeineDrink } from '@/data/repositories/nutritionRepository';
 import { ProgramActivityType, startEmptyWorkout, startWorkoutFromRoutine } from '@/data/repositories/workoutRepository';
 import { toLocalDateKey } from '@/domain/calculations/dates';
-import { Routine } from '@/domain/models';
-import { useDashboard, useProgramScheduleForRange, useRoutines } from '@/hooks/useAppQueries';
+import { FoodItem, Routine } from '@/domain/models';
+import { useDashboard, useFoodSearch, useProgramScheduleForRange, useRoutines, useTodayCaffeine } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { RootStackParamList } from '@/navigation/types';
 import { useFloatingTabBarClearance } from '@/navigation/tabBarMetrics';
@@ -64,6 +64,16 @@ const HERO_NOISE_POINTS = [
   { top: 298, left: 134, opacity: 0.06 },
   { top: 324, left: 284, opacity: 0.04 },
   { top: 346, left: 50, opacity: 0.05 },
+];
+
+const CAFFEINE_PRESETS: Array<{ key: string; name: string; defaultMg: number }> = [
+  { key: 'coffee', name: 'Coffee', defaultMg: 95 },
+  { key: 'espresso', name: 'Espresso', defaultMg: 60 },
+  { key: 'energy_drink', name: 'Energy drink', defaultMg: 160 },
+  { key: 'black_tea', name: 'Black tea', defaultMg: 45 },
+  { key: 'green_tea', name: 'Green tea', defaultMg: 30 },
+  { key: 'cola', name: 'Cola', defaultMg: 35 },
+  { key: 'pre_workout', name: 'Pre-workout', defaultMg: 200 },
 ];
 
 function CalorieArc({ progress, color, trackColor }: { progress: number; color: string; trackColor: string }) {
@@ -160,6 +170,21 @@ function activityColor(activityType: ProgramActivityType, warning: string, info:
   return primary;
 }
 
+function sanitizeMgInput(value: string): string {
+  return value.replace(/[^0-9]/g, '').slice(0, 4);
+}
+
+function parseMgInput(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
 export function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -168,11 +193,21 @@ export function HomeScreen() {
   const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
   const tabBarClearance = useFloatingTabBarClearance(8);
   const workoutBottomPadding = useWorkoutOverlayPadding(28 + tabBarClearance);
-  const dashboard = useDashboard();
-  const routines = useRoutines();
   const todayLocalDate = toLocalDateKey();
+  const dashboard = useDashboard();
+  const caffeineToday = useTodayCaffeine(todayLocalDate);
+  const routines = useRoutines();
   const programSchedule = useProgramScheduleForRange(todayLocalDate, todayLocalDate);
   const [startSheetVisible, setStartSheetVisible] = useState(false);
+  const [caffeineSheetVisible, setCaffeineSheetVisible] = useState(false);
+  const [drinkSearchQuery, setDrinkSearchQuery] = useState('');
+  const [presetMgDrafts, setPresetMgDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(CAFFEINE_PRESETS.map((preset) => [preset.key, String(preset.defaultMg)])),
+  );
+  const [customDrinkName, setCustomDrinkName] = useState('');
+  const [customCaffeineMg, setCustomCaffeineMg] = useState('200');
+  const effectiveDrinkSearchQuery = drinkSearchQuery.trim().length ? drinkSearchQuery : '__home_drink_search__';
+  const drinkSearch = useFoodSearch(effectiveDrinkSearchQuery, 'drink');
   const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
   const scrollY = useSharedValue(0);
 
@@ -195,11 +230,46 @@ export function HomeScreen() {
     },
   });
 
-  const water = useMutation({
-    mutationFn: () => addWater(250, toLocalDateKey()),
+  const addCaffeine = useMutation({
+    mutationFn: async (
+      input:
+        | { type: 'manual'; drinkName: string; caffeineMg: number }
+        | { type: 'database'; food: FoodItem },
+    ) => {
+      if (input.type === 'manual') {
+        return logManualCaffeineDrink({
+          localDate: todayLocalDate,
+          mealSlot: 'snacks',
+          drinkName: input.drinkName,
+          caffeineMg: input.caffeineMg,
+        });
+      }
+
+      return addDiaryEntry({
+        localDate: todayLocalDate,
+        mealSlot: 'snacks',
+        foodItemId: input.food.id,
+        servings: 1,
+        food: input.food,
+      });
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(todayLocalDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(todayLocalDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      queryClient.invalidateQueries({ queryKey: queryKeys.diary(toLocalDateKey()) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods('drink') });
+      queryClient.invalidateQueries({ queryKey: ['foodSearch', 'drink'] as const });
+    },
+  });
+
+  const undoCaffeine = useMutation({
+    mutationFn: () => deleteLatestCaffeineLog(todayLocalDate),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(todayLocalDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.diary(todayLocalDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      queryClient.invalidateQueries({ queryKey: queryKeys.recentFoods('drink') });
+      queryClient.invalidateQueries({ queryKey: ['foodSearch', 'drink'] as const });
     },
   });
 
@@ -292,6 +362,11 @@ export function HomeScreen() {
     : theme.colors.muted;
   const openStartSheet = () => setStartSheetVisible(true);
   const closeStartSheet = () => setStartSheetVisible(false);
+  const openCaffeineSheet = () => setCaffeineSheetVisible(true);
+  const closeCaffeineSheet = () => {
+    setCaffeineSheetVisible(false);
+    setDrinkSearchQuery('');
+  };
   const startFromRoutine = (routineId: string) => {
     closeStartSheet();
     startWorkout.mutate(routineId);
@@ -313,8 +388,66 @@ export function HomeScreen() {
     }
   };
   const openWorkoutsPlan = () => navigation.navigate('MainTabs', { screen: 'Workouts' });
+  const caffeineTotalMg = Math.max(0, Math.round(caffeineToday.data?.totalCaffeineMg ?? 0));
+  const caffeineGoalMg = Math.max(1, Math.round(caffeineToday.data?.goalCaffeineMg ?? 400));
+  const caffeineProgress = Math.max(0, caffeineTotalMg / caffeineGoalMg);
+  const caffeineProgressFill = Math.min(1, caffeineProgress);
+  const caffeineRemaining = Math.max(0, caffeineGoalMg - caffeineTotalMg);
+  const caffeineOver = Math.max(0, caffeineTotalMg - caffeineGoalMg);
+  const caffeineProgressColor = caffeineProgress >= 1 ? theme.colors.danger : caffeineProgress >= 0.75 ? theme.colors.warning : theme.colors.primary;
+  const caffeineStatusColor = caffeineProgress >= 1 ? theme.colors.danger : theme.colors.muted;
+  const caffeineStatusText =
+    caffeineProgress >= 1 ? `${caffeineOver} mg over recommended max` : `${caffeineRemaining} mg left`;
 
-  const waterProgress = data.goals.waterTargetMl <= 0 ? 0 : Math.min(1, Math.max(0, data.today.waterMl / data.goals.waterTargetMl));
+  const updatePresetMg = (key: string, value: string) => {
+    setPresetMgDrafts((current) => ({
+      ...current,
+      [key]: sanitizeMgInput(value),
+    }));
+  };
+
+  const handleAddPresetDrink = (presetKey: string, presetName: string) => {
+    const mg = parseMgInput(presetMgDrafts[presetKey] ?? '');
+    if (!mg) {
+      Alert.alert('Add drink', 'Enter a valid caffeine amount in mg.');
+      return;
+    }
+    addCaffeine.mutate({ type: 'manual', drinkName: presetName, caffeineMg: mg });
+  };
+
+  const handleAddCustomDrink = () => {
+    const drinkName = customDrinkName.trim();
+    const mg = parseMgInput(customCaffeineMg);
+    if (!drinkName.length) {
+      Alert.alert('Add drink', 'Enter a drink name.');
+      return;
+    }
+    if (!mg) {
+      Alert.alert('Add drink', 'Enter a valid caffeine amount in mg.');
+      return;
+    }
+    addCaffeine.mutate({ type: 'manual', drinkName, caffeineMg: mg });
+    setCustomDrinkName('');
+    setCustomCaffeineMg('200');
+  };
+
+  const handleAddDatabaseDrink = (food: FoodItem) => {
+    const caffeine = Number.isFinite(food.caffeineMgPerCan) ? Math.max(0, food.caffeineMgPerCan ?? 0) : 0;
+    if (caffeine <= 0) {
+      Alert.alert('Missing caffeine', 'This drink has no caffeine value in the database. Use Custom instead.');
+      return;
+    }
+    addCaffeine.mutate({ type: 'database', food });
+  };
+
+  const drinkResults = drinkSearchQuery.trim().length >= 1 ? drinkSearch.data ?? [] : [];
+
+  const handleUndoLastDrink = () => {
+    if (!caffeineToday.data?.lastLog) {
+      return;
+    }
+    undoCaffeine.mutate();
+  };
 
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.root, { backgroundColor: theme.colors.background }]}>
@@ -615,28 +748,39 @@ export function HomeScreen() {
               )}
             </Card>
 
-            <Card style={styles.hydrationCard}>
-              <View style={styles.hydrationHeader}>
-                <AppText style={styles.sectionTitle}>Hydration</AppText>
-              </View>
-              <View style={styles.hydrationTopRow}>
-                <View>
-                  <AppText style={[styles.hydrationValue, { color: theme.colors.info }]}>{Math.round(data.today.waterMl)} ml</AppText>
-                  <AppText muted style={styles.hydrationGoal}>goal {Math.round(data.goals.waterTargetMl)} ml</AppText>
-                </View>
+            <Card style={styles.caffeineCard}>
+              <View style={styles.caffeineHeader}>
+                <AppText style={styles.sectionTitle}>Caffeine</AppText>
                 <Pressable
-                  onPress={() => water.mutate()}
+                  onPress={openCaffeineSheet}
                   style={({ pressed }) => [
-                    styles.hydrationAddButton,
+                    styles.caffeineAddButton,
                     { borderColor: theme.colors.info, opacity: pressed ? 0.84 : 1 },
                   ]}
                 >
-                  <AppText style={{ color: theme.colors.info }} weight="800">Add 250 ml</AppText>
+                  <AppText style={{ color: theme.colors.info }} weight="800">Add drink</AppText>
                 </Pressable>
               </View>
+
+              <AppText style={[styles.caffeineValue, { color: caffeineProgressColor }]}>{caffeineTotalMg} mg</AppText>
+              <AppText muted style={styles.caffeineGoal}>of {caffeineGoalMg} mg recommended max</AppText>
+              <AppText style={[styles.caffeineStatus, { color: caffeineStatusColor }]}>{caffeineStatusText}</AppText>
+
               <View style={[styles.progressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
-                <View style={[styles.progressFill, { width: `${waterProgress * 100}%`, backgroundColor: theme.colors.info }]} />
+                <View style={[styles.progressFill, { width: `${caffeineProgressFill * 100}%`, backgroundColor: caffeineProgressColor }]} />
               </View>
+
+              {caffeineToday.data?.lastLog ? (
+                <Pressable
+                  onPress={handleUndoLastDrink}
+                  disabled={undoCaffeine.isPending}
+                  style={({ pressed }) => [{ alignSelf: 'flex-start', opacity: undoCaffeine.isPending ? 0.55 : pressed ? 0.76 : 1 }]}
+                >
+                  <AppText variant="small" weight="700" style={{ color: theme.colors.muted }}>
+                    Undo last ({caffeineToday.data.lastLog.drinkName} {caffeineToday.data.lastLog.caffeineMg} mg)
+                  </AppText>
+                </Pressable>
+              ) : null}
             </Card>
           </View>
         </Animated.ScrollView>
@@ -717,6 +861,168 @@ export function HomeScreen() {
                 <Plus size={20} color={theme.colors.primary} />
                 <AppText weight="800" style={{ color: theme.colors.primary }}>Start empty workout</AppText>
               </Pressable>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={caffeineSheetVisible} transparent animationType="fade" onRequestClose={closeCaffeineSheet}>
+          <View style={styles.sheetOverlay}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeCaffeineSheet} />
+            <View style={[styles.caffeineSheet, { borderColor: theme.colors.border, backgroundColor: 'rgba(17,26,34,0.95)' }]}>
+              <LinearGradient
+                colors={['rgba(255,255,255,0.16)', 'rgba(255,255,255,0.02)', 'rgba(255,255,255,0.01)']}
+                end={{ x: 1, y: 1 }}
+                start={{ x: 0, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.sheetHandle} />
+
+              <View style={styles.sheetHeaderRow}>
+                <View style={styles.sheetHeaderCopy}>
+                  <AppText style={styles.sheetTitle}>Add drink</AppText>
+                  <AppText muted>Quick log for caffeine intake</AppText>
+                </View>
+                <Pressable
+                  onPress={closeCaffeineSheet}
+                  style={({ pressed }) => [
+                    styles.sheetCloseButton,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.8 : 1 },
+                  ]}
+                >
+                  <X size={16} color={theme.colors.text} />
+                </Pressable>
+              </View>
+
+              <ScrollView style={styles.caffeinePresetList} contentContainerStyle={styles.caffeinePresetListContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.caffeineSearchSection}>
+                  <AppText muted variant="small" weight="700">Search drink database</AppText>
+                  <View style={[styles.caffeineSearchInputWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+                    <Search size={16} color={theme.colors.muted} />
+                    <TextInput
+                      value={drinkSearchQuery}
+                      onChangeText={setDrinkSearchQuery}
+                      placeholder="Search drinks"
+                      placeholderTextColor={theme.colors.muted}
+                      style={[styles.caffeineSearchInput, { color: theme.colors.text }]}
+                    />
+                  </View>
+                  {drinkSearchQuery.trim().length >= 1 ? (
+                    drinkSearch.isLoading ? (
+                      <AppText muted variant="small">Searching drinks...</AppText>
+                    ) : drinkResults.length ? (
+                      <View style={styles.caffeineSearchResults}>
+                        {drinkResults.slice(0, 6).map((food) => {
+                          const caffeine = Number.isFinite(food.caffeineMgPerCan) ? Math.round(Math.max(0, food.caffeineMgPerCan ?? 0)) : 0;
+                          const canAdd = caffeine > 0;
+                          return (
+                            <View
+                              key={food.id}
+                              style={[styles.caffeineSearchRow, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}
+                            >
+                              <View style={styles.caffeineSearchCopy}>
+                                <AppText weight="800" numberOfLines={1}>{food.name}</AppText>
+                                <AppText muted variant="small" numberOfLines={1}>
+                                  {food.brandName ? `${food.brandName} • ` : ''}
+                                  {canAdd ? `${caffeine} mg caffeine` : 'No caffeine value'}
+                                </AppText>
+                              </View>
+                              <Pressable
+                                onPress={() => handleAddDatabaseDrink(food)}
+                                disabled={!canAdd || addCaffeine.isPending}
+                                style={({ pressed }) => [
+                                  styles.caffeineSearchAddButton,
+                                  {
+                                    borderColor: canAdd ? theme.colors.primary : theme.colors.border,
+                                    backgroundColor: canAdd ? 'rgba(30,215,96,0.12)' : theme.colors.surface,
+                                    opacity: !canAdd || addCaffeine.isPending ? 0.52 : pressed ? 0.82 : 1,
+                                  },
+                                ]}
+                              >
+                                <AppText weight="800" style={{ color: canAdd ? theme.colors.primary : theme.colors.muted }}>Add</AppText>
+                              </Pressable>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <AppText muted variant="small">No drinks found.</AppText>
+                    )
+                  ) : null}
+                </View>
+
+                {CAFFEINE_PRESETS.map((preset) => (
+                  <View key={preset.key} style={[styles.caffeinePresetRow, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                    <View style={styles.caffeinePresetCopy}>
+                      <AppText weight="800">{preset.name}</AppText>
+                    </View>
+
+                    <View style={[styles.caffeineMgInputWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+                      <TextInput
+                        value={presetMgDrafts[preset.key] ?? String(preset.defaultMg)}
+                        onChangeText={(value) => updatePresetMg(preset.key, value)}
+                        keyboardType="number-pad"
+                        placeholder="mg"
+                        placeholderTextColor={theme.colors.muted}
+                        style={[styles.caffeineMgInput, { color: theme.colors.text }]}
+                      />
+                      <AppText muted variant="small">mg</AppText>
+                    </View>
+
+                    <Pressable
+                      onPress={() => handleAddPresetDrink(preset.key, preset.name)}
+                      disabled={addCaffeine.isPending}
+                      style={({ pressed }) => [
+                        styles.caffeinePresetAddButton,
+                        {
+                          borderColor: theme.colors.primary,
+                          backgroundColor: 'rgba(30,215,96,0.12)',
+                          opacity: addCaffeine.isPending ? 0.56 : pressed ? 0.82 : 1,
+                        },
+                      ]}
+                    >
+                      <AppText weight="800" style={{ color: theme.colors.primary }}>Add</AppText>
+                    </Pressable>
+                  </View>
+                ))}
+
+                <View style={[styles.caffeineCustomCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+                  <AppText weight="800">Custom</AppText>
+                  <View style={styles.caffeineCustomRow}>
+                    <TextInput
+                      value={customDrinkName}
+                      onChangeText={setCustomDrinkName}
+                      placeholder="Drink name"
+                      placeholderTextColor={theme.colors.muted}
+                      style={[styles.caffeineCustomNameInput, { color: theme.colors.text, borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+                    />
+                    <View style={[styles.caffeineMgInputWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+                      <TextInput
+                        value={customCaffeineMg}
+                        onChangeText={(value) => setCustomCaffeineMg(sanitizeMgInput(value))}
+                        keyboardType="number-pad"
+                        placeholder="mg"
+                        placeholderTextColor={theme.colors.muted}
+                        style={[styles.caffeineMgInput, { color: theme.colors.text }]}
+                      />
+                      <AppText muted variant="small">mg</AppText>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={handleAddCustomDrink}
+                    disabled={addCaffeine.isPending}
+                    style={({ pressed }) => [
+                      styles.caffeineCustomAddButton,
+                      {
+                        borderColor: theme.colors.primary,
+                        backgroundColor: 'rgba(30,215,96,0.12)',
+                        opacity: addCaffeine.isPending ? 0.56 : pressed ? 0.82 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText weight="800" style={{ color: theme.colors.primary }}>Add custom drink</AppText>
+                  </Pressable>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -1138,34 +1444,36 @@ const styles = StyleSheet.create({
   emptyState: {
     gap: 10,
   },
-  hydrationCard: {
-    gap: 10,
+  caffeineCard: {
+    gap: 8,
+    paddingBottom: 12,
   },
-  hydrationHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  hydrationTopRow: {
+  caffeineHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  hydrationValue: {
+  caffeineValue: {
     fontSize: 20,
     fontWeight: '800',
     lineHeight: 24,
   },
-  hydrationGoal: {
+  caffeineGoal: {
     fontSize: 11,
     lineHeight: 14,
   },
-  hydrationAddButton: {
+  caffeineStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  caffeineAddButton: {
     alignItems: 'center',
     borderRadius: 12,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 50,
-    minWidth: 148,
+    minHeight: 38,
+    minWidth: 108,
     paddingHorizontal: 14,
   },
   progressTrack: {
@@ -1194,6 +1502,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  caffeineSheet: {
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+    maxHeight: '82%',
+    minHeight: 460,
+    overflow: 'hidden',
+    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
   sheetHandle: {
     alignSelf: 'center',
     backgroundColor: 'rgba(255,255,255,0.48)',
@@ -1216,6 +1536,129 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: '800',
     lineHeight: 28,
+  },
+  caffeinePresetList: {
+    flexGrow: 0,
+  },
+  caffeinePresetListContent: {
+    gap: 10,
+    paddingBottom: 6,
+  },
+  caffeineSearchSection: {
+    gap: 8,
+    marginBottom: 4,
+  },
+  caffeineSearchInputWrap: {
+    alignItems: 'center',
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 42,
+    paddingHorizontal: 10,
+  },
+  caffeineSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    minWidth: 0,
+    paddingVertical: 0,
+  },
+  caffeineSearchResults: {
+    gap: 8,
+  },
+  caffeineSearchRow: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 58,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  caffeineSearchCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+    paddingRight: 6,
+  },
+  caffeineSearchAddButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 36,
+    minWidth: 62,
+    paddingHorizontal: 10,
+  },
+  caffeinePresetRow: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 66,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  caffeinePresetCopy: {
+    flex: 1,
+    paddingRight: 6,
+  },
+  caffeineMgInputWrap: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 38,
+    minWidth: 86,
+    paddingHorizontal: 8,
+  },
+  caffeineMgInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    minWidth: 0,
+    paddingVertical: 0,
+  },
+  caffeinePresetAddButton: {
+    alignItems: 'center',
+    borderRadius: 11,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    minWidth: 64,
+    paddingHorizontal: 12,
+  },
+  caffeineCustomCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+    marginTop: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  caffeineCustomRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  caffeineCustomNameInput: {
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    fontSize: 15,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  caffeineCustomAddButton: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
   },
   sheetCloseButton: {
     alignItems: 'center',

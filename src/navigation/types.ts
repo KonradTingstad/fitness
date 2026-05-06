@@ -5,7 +5,12 @@ import { ProgressWidgetCategory, ProgressWidgetMetric } from '@/features/progres
 
 export type BottomTabParamList = {
   Home: undefined;
-  Workouts: undefined;
+  Workouts:
+    | {
+        openHistorySessionId?: string;
+        openHistorySessionAt?: number;
+      }
+    | undefined;
   Nutrition: undefined;
   Progress: undefined;
 };
@@ -17,6 +22,7 @@ export type RootStackParamList = {
   ProfileSettings: undefined;
   LiveWorkout: { sessionId: string };
   WorkoutSummary: { sessionId: string; startInEdit?: boolean };
+  WorkoutCompletion: { sessionId: string };
   ExerciseHistory: { exerciseId: string };
   TemplateBuilder: { groupId?: string; groupName?: string; routineId?: string } | undefined;
   EditProgram: { initialLocalDate?: string } | undefined;

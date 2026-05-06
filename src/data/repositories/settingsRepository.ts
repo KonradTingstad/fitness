@@ -83,6 +83,8 @@ export interface ProfileBundle {
   goals: GoalSettings;
 }
 
+export const DEFAULT_CAFFEINE_TARGET_MG = 400;
+
 export async function getProfileBundle(userId = DEMO_USER_ID): Promise<ProfileBundle> {
   const db = await getDatabase();
   const [user, profile, settings, units, goals] = await Promise.all([
@@ -251,6 +253,33 @@ export async function updateMealsPerDayTarget(target: number, userId = DEMO_USER
   const db = await getDatabase();
   const normalized = Math.max(1, Math.min(12, Math.round(target)));
   const key = `meals_per_day_target:${userId}`;
+  await db.runAsync(
+    `INSERT INTO app_metadata (key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, String(normalized)],
+  );
+  return normalized;
+}
+
+export async function getCaffeineTargetMg(userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const key = `caffeine_target_mg:${userId}`;
+  const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [key]);
+  if (!row) {
+    return DEFAULT_CAFFEINE_TARGET_MG;
+  }
+  const parsed = Number.parseInt(row.value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_CAFFEINE_TARGET_MG;
+  }
+  return parsed;
+}
+
+export async function updateCaffeineTargetMg(targetMg: number, userId = DEMO_USER_ID): Promise<number> {
+  const db = await getDatabase();
+  const normalized = Math.max(50, Math.min(1000, Math.round(targetMg)));
+  const key = `caffeine_target_mg:${userId}`;
   await db.runAsync(
     `INSERT INTO app_metadata (key, value)
      VALUES (?, ?)

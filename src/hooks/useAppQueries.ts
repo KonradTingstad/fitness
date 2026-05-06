@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { getBodyWeightTrend, getDashboardSummary } from '@/data/repositories/dashboardRepository';
 import {
+  getDailyCaffeineSummary,
   FoodSearchItemType,
   getCalorieGoalStreak,
   getDiary,
@@ -21,6 +22,7 @@ import {
 import { getMealsPerDayTarget, getProfileBundle } from '@/data/repositories/settingsRepository';
 import { ProgressWidgetGrouping, ProgressWidgetMetric, ProgressWidgetTimeRange } from '@/features/progress/widgets/types';
 import {
+  getCompletedWorkoutCount,
   getActiveWorkout,
   getExerciseHistory,
   getRecentWorkouts,
@@ -54,6 +56,10 @@ export function useWorkoutSession(id: string) {
 
 export function useRecentWorkouts() {
   return useQuery({ queryKey: queryKeys.recentWorkouts, queryFn: () => getRecentWorkouts() });
+}
+
+export function useCompletedWorkoutCount() {
+  return useQuery({ queryKey: queryKeys.completedWorkoutCount, queryFn: () => getCompletedWorkoutCount() });
 }
 
 export function useWorkoutPlansForRange(startLocalDate: string, endLocalDate: string) {
@@ -107,6 +113,13 @@ export function useCalorieStreak(localDate = toLocalDateKey()) {
   return useQuery({
     queryKey: queryKeys.calorieStreak(localDate),
     queryFn: () => getCalorieGoalStreak(localDate),
+  });
+}
+
+export function useTodayCaffeine(localDate = toLocalDateKey()) {
+  return useQuery({
+    queryKey: queryKeys.caffeineToday(localDate),
+    queryFn: () => getDailyCaffeineSummary(localDate),
   });
 }
 

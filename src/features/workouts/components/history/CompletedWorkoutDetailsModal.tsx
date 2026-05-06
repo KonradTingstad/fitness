@@ -1,13 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Calendar, Check, Clock, Dumbbell, Pencil, Trophy, Weight, X } from 'lucide-react-native';
+import { Clock, Pencil, Trophy, Weight, X } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
 import { getWorkoutSession } from '@/data/repositories/workoutRepository';
-import { calculateWorkoutVolume } from '@/domain/calculations/workout';
+import { calculateWorkoutVolume, estimatedOneRepMax } from '@/domain/calculations/workout';
 import { SetType, WorkoutSet } from '@/domain/models';
 import { queryKeys } from '@/hooks/queryKeys';
 import { useAppTheme } from '@/theme/theme';
@@ -24,7 +23,7 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
   const insets = useSafeAreaInsets();
 
   const session = useQuery({
-    queryKey: sessionId ? queryKeys.workout(sessionId) : ['workout', 'modal-preview'] as const,
+    queryKey: sessionId ? queryKeys.workout(sessionId) : (['workout', 'modal-preview'] as const),
     queryFn: () => getWorkoutSession(sessionId as string),
     enabled: visible && Boolean(sessionId),
   });
@@ -34,7 +33,6 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
       return {
         duration: '--',
         volumeKg: 0,
-        totalSets: 0,
         prs: 0,
       };
     }
@@ -43,15 +41,13 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
     const completedSets = allSets.filter((set) => set.isCompleted);
     const endedAt = session.data.endedAt ? new Date(session.data.endedAt) : new Date();
     const diffMs = endedAt.getTime() - new Date(session.data.startedAt).getTime();
-    const duration = formatDuration(diffMs);
     const prs = completedSets.filter(
       (set) => (set.weightKg ?? 0) > (set.previousWeightKg ?? 0) && (set.reps ?? 0) >= (set.previousReps ?? 0),
     ).length;
 
     return {
-      duration,
+      duration: formatDuration(diffMs),
       volumeKg: Math.round(calculateWorkoutVolume(completedSets)),
-      totalSets: allSets.length,
       prs,
     };
   }, [session.data]);
@@ -70,28 +66,31 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
             styles.sheet,
             {
               borderColor: theme.colors.border,
-              backgroundColor: 'rgba(11,16,22,0.98)',
-              marginTop: Math.max(14, insets.top + 8),
+              backgroundColor: 'rgba(9,13,19,0.98)',
+              marginTop: Math.max(16, insets.top + 10),
               paddingBottom: Math.max(14, insets.bottom + 10),
             },
           ]}
         >
-          <View style={styles.handleWrap}>
-            <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
-          </View>
-
-          <View style={styles.headerRow}>
+          <View style={[styles.headerRow, { borderBottomColor: theme.colors.border }]}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close workout details"
               onPress={onClose}
-              style={({ pressed }) => [styles.headerIcon, { borderColor: theme.colors.border, opacity: pressed ? 0.8 : 1 }]}
+              style={({ pressed }) => [
+                styles.headerAction,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceAlt,
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
             >
               <X size={16} color={theme.colors.text} />
             </Pressable>
 
-            <AppText variant="section" numberOfLines={1} style={styles.headerTitle}>
-              {session.data?.title ?? 'Workout details'}
+            <AppText variant="section" weight="800" numberOfLines={1} style={styles.headerTitle}>
+              {session.data?.title ?? 'Workout'}
             </AppText>
 
             <Pressable
@@ -104,10 +103,10 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
                 }
               }}
               style={({ pressed }) => [
-                styles.editButton,
+                styles.editAction,
                 {
-                  borderColor: 'rgba(53,199,122,0.38)',
-                  backgroundColor: 'rgba(53,199,122,0.16)',
+                  borderColor: 'rgba(53,199,122,0.34)',
+                  backgroundColor: 'rgba(53,199,122,0.12)',
                   opacity: !sessionId ? 0.5 : pressed ? 0.8 : 1,
                 },
               ]}
@@ -125,130 +124,73 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
             keyboardShouldPersistTaps="handled"
           >
             {session.isLoading ? (
-              <View style={[styles.statusCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                <AppText muted>Loading workout…</AppText>
-              </View>
+              <AppText muted>Loading workout…</AppText>
             ) : session.isError || !session.data ? (
-              <View style={[styles.statusCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
-                <AppText muted>
-                  {session.error instanceof Error ? session.error.message : 'Could not load workout details.'}
-                </AppText>
-              </View>
+              <AppText muted>
+                {session.error instanceof Error ? session.error.message : 'Could not load workout details.'}
+              </AppText>
             ) : (
               <>
-                <LinearGradient
-                  colors={['rgba(23,31,40,0.98)', 'rgba(18,26,34,0.98)', 'rgba(14,21,29,0.98)']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[styles.heroCard, { borderColor: theme.colors.border }]}
-                >
-                  <View style={styles.heroGlow} pointerEvents="none" />
-
-                  <AppText variant="title" numberOfLines={2} style={styles.heroTitle}>
-                    {session.data.title}
+                <View style={styles.metaBlock}>
+                  <AppText muted style={styles.startedAtText}>
+                    {formatStartedAtLabel(session.data.startedAt)}
                   </AppText>
 
-                  <View style={styles.heroMetaRow}>
-                    <MetaPill icon={Calendar} label={formatDateLabel(session.data.startedAt)} />
-                    <MetaPill
-                      icon={Clock}
-                      label={`${formatTimeLabel(session.data.startedAt)}${session.data.endedAt ? ` - ${formatTimeLabel(session.data.endedAt)}` : ''}`}
-                    />
+                  <View style={styles.metricsRow}>
+                    <MetricItem icon={Clock} value={metrics.duration} />
+                    <MetricItem icon={Weight} value={`${metrics.volumeKg.toLocaleString()} kg`} />
+                    <MetricItem icon={Trophy} value={`${metrics.prs} PRs`} />
                   </View>
-
-                  <View style={styles.metricGrid}>
-                    <MetricTile icon={Clock} label="Duration" value={metrics.duration} />
-                    <MetricTile icon={Check} label="Sets" value={String(metrics.totalSets)} />
-                    <MetricTile icon={Weight} label="Volume" value={`${metrics.volumeKg.toLocaleString()} kg`} />
-                    <MetricTile icon={Trophy} label="PRs" value={String(metrics.prs)} />
-                  </View>
-                </LinearGradient>
-
-                <View style={styles.sectionHeader}>
-                  <AppText variant="section">Exercises</AppText>
-                  <AppText muted variant="small">
-                    {session.data.exercises.length}
-                  </AppText>
                 </View>
 
-                {session.data.exercises.length ? (
-                  session.data.exercises.map((exercise) => (
-                    <View
-                      key={exercise.id}
-                      style={[
-                        styles.exerciseCard,
-                        {
-                          borderColor: theme.colors.border,
-                          backgroundColor: theme.colors.surfaceAlt,
-                        },
-                      ]}
-                    >
-                      <View style={styles.exerciseHeader}>
-                        <View style={styles.exerciseIconWrap}>
-                          <Dumbbell size={14} color={theme.colors.primary} />
-                        </View>
-                        <View style={styles.exerciseHeaderText}>
-                          <AppText weight="800">{exercise.exercise?.name ?? 'Exercise'}</AppText>
-                          <AppText muted variant="small" numberOfLines={1}>
-                            {exercise.exercise?.primaryMuscle ?? 'Body'} • {exercise.exercise?.equipment ?? 'Equipment'}
-                          </AppText>
-                        </View>
-                        <AppText muted variant="small">
-                          {exercise.sets.length} sets
-                        </AppText>
-                      </View>
-
-                      <View style={styles.setList}>
-                        {exercise.sets.map((set, setIndex) => (
-                          <View
-                            key={set.id}
-                            style={[
-                              styles.setRow,
-                              {
-                                borderColor: theme.colors.border,
-                                backgroundColor: theme.colors.surface,
-                              },
-                            ]}
-                          >
-                            <View style={styles.setLead}>
-                              <View
-                                style={[
-                                  styles.setTypeBadge,
-                                  {
-                                    borderColor: theme.colors.border,
-                                    backgroundColor: theme.colors.surfaceAlt,
-                                  },
-                                ]}
-                              >
-                                <AppText variant="small" weight="700">
-                                  {setTypeLabel(set.setType)}
-                                </AppText>
-                              </View>
-                              <AppText muted variant="small">
-                                Set {setIndex + 1}
+                <View style={styles.exerciseList}>
+                  {session.data.exercises.length ? (
+                    session.data.exercises.map((exercise) => {
+                      const showOneRm = exercise.sets.some((set) => getOneRepMax(set) != null);
+                      return (
+                        <View key={exercise.id} style={[styles.exerciseBlock, { borderBottomColor: theme.colors.border }]}>
+                          <View style={styles.exerciseHeader}>
+                            <AppText weight="800" style={styles.exerciseName}>
+                              {exercise.exercise?.name ?? 'Exercise'}
+                            </AppText>
+                            {showOneRm ? (
+                              <AppText muted variant="small" style={styles.oneRmHeader}>
+                                1RM
                               </AppText>
-                            </View>
-
-                            <View style={styles.setValueWrap}>
-                              <AppText weight="700" numberOfLines={1} style={styles.setValueText}>
-                                {formatSetSummary(set)}
-                              </AppText>
-                              <AppText muted variant="small" numberOfLines={1}>
-                                {formatSetExtra(set)}
-                              </AppText>
-                            </View>
-
-                            {set.isCompleted ? <Check size={15} color={theme.colors.primary} /> : null}
+                            ) : null}
                           </View>
-                        ))}
-                      </View>
-                    </View>
-                  ))
-                ) : (
-                  <View style={[styles.statusCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt }]}>
+
+                          {exercise.sets.length ? (
+                            exercise.sets.map((set, index) => {
+                              const oneRm = getOneRepMax(set);
+                              return (
+                                <View key={set.id} style={styles.setRow}>
+                                  <AppText muted style={styles.setIndex}>
+                                    {setRowLabel(set.setType, index)}
+                                  </AppText>
+                                  <AppText muted numberOfLines={1} style={styles.setSummary}>
+                                    {formatSetSummary(set)}
+                                  </AppText>
+                                  {showOneRm ? (
+                                    <AppText muted style={styles.oneRmValue}>
+                                      {oneRm != null ? formatNumber(Math.round(oneRm)) : '—'}
+                                    </AppText>
+                                  ) : null}
+                                </View>
+                              );
+                            })
+                          ) : (
+                            <AppText muted variant="small">
+                              No sets logged
+                            </AppText>
+                          )}
+                        </View>
+                      );
+                    })
+                  ) : (
                     <AppText muted>No exercises logged in this workout.</AppText>
-                  </View>
-                )}
+                  )}
+                </View>
               </>
             )}
           </ScrollView>
@@ -258,49 +200,31 @@ export function CompletedWorkoutDetailsModal({ visible, sessionId, onClose, onEd
   );
 }
 
-function MetaPill({ icon: Icon, label }: { icon: typeof Calendar; label: string }) {
+function MetricItem({ icon: Icon, value }: { icon: typeof Clock; value: string }) {
   const theme = useAppTheme();
   return (
-    <View style={[styles.metaPill, { borderColor: theme.colors.border, backgroundColor: 'rgba(255,255,255,0.04)' }]}>
+    <View style={styles.metricItem}>
       <Icon size={13} color={theme.colors.muted} />
-      <AppText variant="small" muted numberOfLines={1}>
-        {label}
+      <AppText muted variant="small" numberOfLines={1}>
+        {value}
       </AppText>
     </View>
   );
 }
 
-function MetricTile({ icon: Icon, label, value }: { icon: typeof Clock; label: string; value: string }) {
-  const theme = useAppTheme();
-  return (
-    <View style={[styles.metricTile, { borderColor: theme.colors.border, backgroundColor: 'rgba(255,255,255,0.04)' }]}>
-      <View style={[styles.metricIcon, { backgroundColor: 'rgba(53,199,122,0.14)' }]}>
-        <Icon size={12} color={theme.colors.primary} />
-      </View>
-      <View style={styles.metricText}>
-        <AppText muted variant="small">
-          {label}
-        </AppText>
-        <AppText weight="800">{value}</AppText>
-      </View>
-    </View>
-  );
-}
-
-function formatDateLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    weekday: 'short',
+function formatStartedAtLabel(iso: string): string {
+  const date = new Date(iso);
+  const timeLabel = date.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const dateLabel = date.toLocaleDateString(undefined, {
+    weekday: 'long',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
-}
-
-function formatTimeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return `${timeLabel}, ${dateLabel}`;
 }
 
 function formatDuration(diffMs: number): string {
@@ -316,6 +240,16 @@ function formatDuration(diffMs: number): string {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
+function setRowLabel(type: SetType, index: number): string {
+  if (type === 'warmup') return 'W';
+  if (type === 'drop') return 'D';
+  if (type === 'failure') return 'F';
+  if (type === 'assisted') return 'A';
+  if (type === 'bodyweight') return 'B';
+  if (type === 'timed') return 'T';
+  return String(index + 1);
+}
+
 function formatSetSummary(set: WorkoutSet): string {
   const hasWeight = set.weightKg != null;
   const hasReps = set.reps != null;
@@ -323,15 +257,16 @@ function formatSetSummary(set: WorkoutSet): string {
   const hasDistance = set.distanceMeters != null;
 
   if (hasWeight && hasReps) {
-    return `${formatNumber(set.weightKg ?? 0)} kg x ${formatNumber(set.reps ?? 0)}`;
+    return `${formatNumber(set.weightKg ?? 0)} kg × ${formatNumber(set.reps ?? 0)}`;
+  }
+
+  if (hasReps) {
+    return `${formatNumber(set.reps ?? 0)} reps`;
   }
 
   const parts: string[] = [];
   if (hasWeight) {
     parts.push(`${formatNumber(set.weightKg ?? 0)} kg`);
-  }
-  if (hasReps) {
-    parts.push(`${formatNumber(set.reps ?? 0)} reps`);
   }
   if (hasDuration) {
     parts.push(`${formatNumber(set.durationSeconds ?? 0)} s`);
@@ -340,36 +275,20 @@ function formatSetSummary(set: WorkoutSet): string {
     parts.push(`${formatNumber(set.distanceMeters ?? 0)} m`);
   }
 
-  return parts.length ? parts.join(' • ') : '--';
+  return parts.length ? parts.join(' • ') : '—';
 }
 
-function formatSetExtra(set: WorkoutSet): string {
-  const extras: string[] = [];
-  if (set.rpe != null) {
-    extras.push(`RPE ${formatNumber(set.rpe)}`);
+function getOneRepMax(set: WorkoutSet): number | null {
+  if (set.weightKg == null || set.reps == null || set.weightKg <= 0 || set.reps <= 0) {
+    return null;
   }
-  if (set.rir != null) {
-    extras.push(`RIR ${formatNumber(set.rir)}`);
-  }
-  if (!extras.length) {
-    return ' '; // keeps row height stable
-  }
-  return extras.join(' • ');
-}
-
-function setTypeLabel(type: SetType): string {
-  if (type === 'warmup') return 'Warmup';
-  if (type === 'drop') return 'Dropset';
-  if (type === 'failure') return 'Failure';
-  if (type === 'assisted') return 'Assisted';
-  if (type === 'bodyweight') return 'Bodyweight';
-  if (type === 'timed') return 'Timed';
-  return 'Normal';
+  const value = estimatedOneRepMax(set.weightKg, set.reps);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
-    return '--';
+    return '—';
   }
   if (Math.abs(value - Math.round(value)) < 0.001) {
     return String(Math.round(value));
@@ -384,34 +303,25 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(4,7,11,0.58)',
+    backgroundColor: 'rgba(4,7,11,0.62)',
   },
   sheet: {
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
-    maxHeight: '95%',
-    minHeight: '78%',
+    maxHeight: '94%',
+    minHeight: '72%',
     overflow: 'hidden',
-    paddingHorizontal: 14,
-    paddingTop: 6,
-  },
-  handleWrap: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    borderRadius: 999,
-    height: 4,
-    width: 44,
   },
   headerRow: {
     alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
-  headerIcon: {
+  headerAction: {
     alignItems: 'center',
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
@@ -423,153 +333,83 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  editButton: {
+  editAction: {
     alignItems: 'center',
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     gap: 4,
     minHeight: 34,
-    minWidth: 64,
     justifyContent: 'center',
+    minWidth: 70,
     paddingHorizontal: 10,
   },
   content: {
-    gap: 10,
-    paddingBottom: 8,
+    gap: 18,
+    paddingHorizontal: 18,
+    paddingTop: 14,
   },
-  statusCard: {
+  metaBlock: {
+    gap: 9,
+  },
+  startedAtText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  metricsRow: {
     alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    justifyContent: 'center',
-    minHeight: 76,
-    paddingHorizontal: 12,
-  },
-  heroCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-    padding: 12,
-    position: 'relative',
-  },
-  heroGlow: {
-    backgroundColor: 'rgba(53,199,122,0.14)',
-    borderRadius: 999,
-    height: 140,
-    position: 'absolute',
-    right: -38,
-    top: -48,
-    width: 140,
-  },
-  heroTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    paddingRight: 12,
-  },
-  heroMetaRow: {
     flexDirection: 'row',
+    gap: 14,
     flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
   },
-  metaPill: {
+  metricItem: {
     alignItems: 'center',
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 4,
-    minHeight: 28,
+    gap: 5,
     maxWidth: '100%',
-    paddingHorizontal: 9,
   },
-  metricGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
+  exerciseList: {
+    gap: 16,
+    paddingBottom: 6,
   },
-  metricTile: {
-    borderRadius: 11,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    gap: 8,
-    minHeight: 48,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    width: '48.5%',
-  },
-  metricIcon: {
-    alignItems: 'center',
-    borderRadius: 999,
-    height: 24,
-    justifyContent: 'center',
-    width: 24,
-  },
-  metricText: {
-    flex: 1,
-    gap: 1,
-    minWidth: 0,
-  },
-  sectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  exerciseCard: {
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 8,
-    padding: 10,
+  exerciseBlock: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    paddingBottom: 13,
   },
   exerciseHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
   },
-  exerciseIconWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 28,
-    width: 28,
-  },
-  exerciseHeaderText: {
+  exerciseName: {
     flex: 1,
-    gap: 1,
+    fontSize: 18,
+    lineHeight: 24,
     minWidth: 0,
   },
-  setList: {
-    gap: 6,
+  oneRmHeader: {
+    minWidth: 40,
+    textAlign: 'right',
   },
   setRow: {
     alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 8,
-    minHeight: 50,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    gap: 10,
+    minHeight: 24,
   },
-  setLead: {
-    gap: 3,
-    width: 90,
+  setIndex: {
+    minWidth: 16,
+    textAlign: 'left',
   },
-  setTypeBadge: {
-    alignItems: 'center',
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    minHeight: 22,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  setValueWrap: {
+  setSummary: {
     flex: 1,
+    fontSize: 15,
+    lineHeight: 20,
     minWidth: 0,
   },
-  setValueText: {
-    fontSize: 14,
-    lineHeight: 18,
+  oneRmValue: {
+    minWidth: 40,
+    textAlign: 'right',
   },
 });

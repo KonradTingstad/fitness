@@ -90,9 +90,10 @@ export function LiveWorkoutScreen() {
     mutationFn: () => finishWorkout(route.params.sessionId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.completedWorkoutCount });
       queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
       queryClient.invalidateQueries({ queryKey: queryKeys.progress });
-      navigation.replace('WorkoutSummary', { sessionId: route.params.sessionId });
+      navigation.replace('WorkoutCompletion', { sessionId: route.params.sessionId });
     },
   });
 

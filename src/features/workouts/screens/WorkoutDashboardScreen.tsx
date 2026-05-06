@@ -1,4 +1,4 @@
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, addMonths, addYears, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
@@ -18,14 +18,16 @@ import {
   Play,
   Plus,
   Search,
+  Share2,
   SlidersHorizontal,
   Star,
+  Trash2,
   Trophy,
   Weight,
   X,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, LayoutAnimation, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, LayoutAnimation, Modal, Pressable, ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AppText } from '@/components/AppText';
@@ -37,18 +39,21 @@ import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
 import { calculateWorkoutVolume } from '@/domain/calculations/workout';
 import {
+  discardWorkout,
   deleteRoutineTemplate,
   ProgramActivityType,
   ProgramDayOutcomeStatus,
   ProgramScheduleDay,
   listWorkoutSessionsForRange,
+  SaveRoutineTemplateInput,
+  saveRoutineTemplate,
   startEmptyWorkout,
   startWorkoutFromRoutine,
   upsertProgramDayOutcome,
 } from '@/data/repositories/workoutRepository';
 import { useExercises, useProgramDayOutcomesForRange, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
-import { RootStackParamList } from '@/navigation/types';
+import { BottomTabParamList, RootStackParamList } from '@/navigation/types';
 import { CompletedWorkoutDetailsModal } from '@/features/workouts/components/history/CompletedWorkoutDetailsModal';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
@@ -56,6 +61,7 @@ import { DateNavigator } from '@/components/DateNavigator';
 import { AppTheme, useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+type WorkoutsRoute = RouteProp<BottomTabParamList, 'Workouts'>;
 type WorkoutTab = 'today' | 'program' | 'history' | 'exercises';
 type ExerciseFilter = 'All' | 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms';
 type ScheduleType = 'workout' | 'rest';
@@ -240,7 +246,39 @@ function buildRecentHistoryRows(workout: WorkoutSession): RecentHistoryExerciseR
       };
     })
     .filter((row): row is RecentHistoryExerciseRow => Boolean(row))
-    .slice(0, 5);
+    .slice(0, 6);
+}
+
+function buildTemplateInputFromWorkout(workout: WorkoutSession, templateName?: string): SaveRoutineTemplateInput {
+  return {
+    name: templateName?.trim() || `${workout.title} template`,
+    notes: workout.notes ?? null,
+    exercises: workout.exercises.map((exercise) => ({
+      exerciseId: exercise.exerciseId,
+      supersetGroup: exercise.supersetGroup ?? null,
+      notes: exercise.notes ?? null,
+      defaultRestSeconds: 120,
+      sets: exercise.sets.length
+        ? exercise.sets.map((set) => ({
+            setType: set.setType,
+            targetReps: set.reps ?? null,
+            targetWeightKg: set.weightKg ?? null,
+            durationSeconds: set.durationSeconds ?? null,
+            distanceMeters: set.distanceMeters ?? null,
+          }))
+        : [{ setType: 'normal' as const }],
+    })),
+  };
+}
+
+function buildHistoryShareMessage(workout: WorkoutSession): string {
+  const volumeKg = Math.round(calculateWorkoutVolumeKg(workout));
+  const prCount = calculateWorkoutPRCount(workout);
+  const rows = buildRecentHistoryRows(workout).map((row) => `- ${row.exerciseLabel}: ${row.bestSetLabel}`);
+  const header = `${workout.title}\n${format(new Date(workout.startedAt), 'EEEE, d MMM yyyy')}`;
+  const meta = `Duration: ${formatWorkoutDuration(workout)} • Volume: ${volumeKg.toLocaleString()} kg • PRs: ${prCount}`;
+  const body = rows.length ? `\n\nExercise / Best set\n${rows.join('\n')}` : '';
+  return `${header}\n${meta}${body}`;
 }
 
 function mapExerciseCategory(primaryMuscle: string): ExerciseFilter {
@@ -634,10 +672,12 @@ function calculateCurrentStreak(
 export function WorkoutDashboardScreen() {
   const theme = useAppTheme();
   const navigation = useNavigation<Nav>();
+  const route = useRoute<WorkoutsRoute>();
   const queryClient = useQueryClient();
   const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
   const historyYearScrollRef = useRef<ScrollView>(null);
   const historyMultiYearScrollRef = useRef<ScrollView>(null);
+  const handledHistoryReopenTokenRef = useRef<number | null>(null);
   const [tab, setTab] = useState<WorkoutTab>('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>('All');
@@ -647,6 +687,7 @@ export function WorkoutDashboardScreen() {
   const [historyMonth, setHistoryMonth] = useState(() => new Date());
   const [historyCalendarMode, setHistoryCalendarMode] = useState<HistoryCalendarMode>('month');
   const [historyDetailsSessionId, setHistoryDetailsSessionId] = useState<string | null>(null);
+  const [historyActionSessionId, setHistoryActionSessionId] = useState<string | null>(null);
   const today = new Date();
   const todayKey = localDateKey(today);
   const [selectedDate, setSelectedDate] = useState(() => todayKey);
@@ -691,6 +732,20 @@ export function WorkoutDashboardScreen() {
       return undefined;
     }, []),
   );
+
+  useEffect(() => {
+    const targetSessionId = route.params?.openHistorySessionId;
+    const reopenToken = route.params?.openHistorySessionAt;
+    if (!targetSessionId || !reopenToken) {
+      return;
+    }
+    if (handledHistoryReopenTokenRef.current === reopenToken) {
+      return;
+    }
+    handledHistoryReopenTokenRef.current = reopenToken;
+    setTab('history');
+    setHistoryDetailsSessionId(targetSessionId);
+  }, [route.params?.openHistorySessionAt, route.params?.openHistorySessionId]);
 
   useEffect(() => {
     if (routines.isLoading) {
@@ -808,6 +863,39 @@ export function WorkoutDashboardScreen() {
     },
   });
 
+  const saveHistoryTemplate = useMutation({
+    mutationFn: (input: SaveRoutineTemplateInput) => saveRoutineTemplate(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.routines });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && (query.queryKey[0] === 'workoutPlans' || query.queryKey[0] === 'programSchedule'),
+      });
+    },
+    onError: (error) => {
+      Alert.alert('Save as template', error instanceof Error ? error.message : 'Unable to save workout as template.');
+    },
+  });
+
+  const deleteHistoryWorkout = useMutation({
+    mutationFn: (sessionId: string) => discardWorkout(sessionId),
+    onSuccess: (_result, sessionId) => {
+      if (historyDetailsSessionId === sessionId) {
+        setHistoryDetailsSessionId(null);
+      }
+      if (historyActionSessionId === sessionId) {
+        setHistoryActionSessionId(null);
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'workoutSessions',
+      });
+    },
+    onError: (error) => {
+      Alert.alert('Delete workout', error instanceof Error ? error.message : 'Unable to delete workout.');
+    },
+  });
+
   if (
     routines.isLoading
     || recent.isLoading
@@ -865,6 +953,9 @@ export function WorkoutDashboardScreen() {
   });
   const programGroups = groupsLoaded ? workoutGroups : buildDefaultGroups(routineList);
   const routinesById = new Map(routineList.map((routine) => [routine.id, routine]));
+  const activeHistoryActionWorkout = historyActionSessionId
+    ? recentList.find((workout) => workout.id === historyActionSessionId) ?? null
+    : null;
 
   const renderTabs = () => (
     <View style={styles.tabShell}>
@@ -1606,7 +1697,96 @@ export function WorkoutDashboardScreen() {
 
   const editHistoryWorkout = (sessionId: string) => {
     setHistoryDetailsSessionId(null);
+    setHistoryActionSessionId(null);
     navigation.navigate('WorkoutSummary', { sessionId, startInEdit: true });
+  };
+
+  const openHistoryActionMenu = (sessionId: string) => {
+    setHistoryActionSessionId(sessionId);
+  };
+
+  const closeHistoryActionMenu = () => {
+    setHistoryActionSessionId(null);
+  };
+
+  const handleHistoryActionEdit = () => {
+    if (!activeHistoryActionWorkout) {
+      return;
+    }
+    editHistoryWorkout(activeHistoryActionWorkout.id);
+  };
+
+  const handleHistoryActionSaveTemplate = async () => {
+    if (!activeHistoryActionWorkout) {
+      return;
+    }
+    if (!activeHistoryActionWorkout.exercises.length) {
+      Alert.alert('Save as template', 'Workout has no exercises to save.');
+      return;
+    }
+    try {
+      await saveHistoryTemplate.mutateAsync(
+        buildTemplateInputFromWorkout(
+          activeHistoryActionWorkout,
+          `${activeHistoryActionWorkout.title} • ${format(new Date(activeHistoryActionWorkout.startedAt), 'd MMM yyyy')}`,
+        ),
+      );
+      closeHistoryActionMenu();
+      Alert.alert('Template saved', 'Workout saved as a new template.');
+    } catch {
+      // Error is handled by mutation.
+    }
+  };
+
+  const handleHistoryActionPerformAgain = async () => {
+    if (!activeHistoryActionWorkout) {
+      return;
+    }
+    closeHistoryActionMenu();
+    if (activeHistoryActionWorkout.routineId) {
+      startRoutine.mutate(activeHistoryActionWorkout.routineId);
+      return;
+    }
+    if (!activeHistoryActionWorkout.exercises.length) {
+      Alert.alert('Perform again', 'Workout has no exercises to replay.');
+      return;
+    }
+    try {
+      const routineId = await saveHistoryTemplate.mutateAsync(
+        buildTemplateInputFromWorkout(activeHistoryActionWorkout, `${activeHistoryActionWorkout.title} replay`),
+      );
+      startRoutine.mutate(routineId);
+    } catch {
+      // Error is handled by mutation.
+    }
+  };
+
+  const handleHistoryActionShare = async () => {
+    if (!activeHistoryActionWorkout) {
+      return;
+    }
+    try {
+      await Share.share({ message: buildHistoryShareMessage(activeHistoryActionWorkout) });
+      closeHistoryActionMenu();
+    } catch {
+      Alert.alert('Share', 'Could not open share sheet right now.');
+    }
+  };
+
+  const handleHistoryActionDelete = () => {
+    if (!activeHistoryActionWorkout) {
+      return;
+    }
+    Alert.alert('Delete workout?', 'This workout will be removed from history.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          deleteHistoryWorkout.mutate(activeHistoryActionWorkout.id);
+        },
+      },
+    ]);
   };
 
   const renderHistoryCalendarTabs = () => (
@@ -1850,53 +2030,71 @@ export function WorkoutDashboardScreen() {
             >
               <View style={styles.recentHistoryHeader}>
                 <View style={styles.recentHistoryHeaderCopy}>
-                  <AppText weight="800" style={styles.savedTitle}>
+                  <AppText weight="800" style={styles.recentHistoryTitle}>
                     {workout.title}
                   </AppText>
-                  <AppText muted>{format(new Date(workout.startedAt), 'EEEE, d MMM')}</AppText>
+                  <AppText muted>{format(new Date(workout.startedAt), 'EEEE, d MMM yyyy')}</AppText>
                 </View>
-                <View style={[styles.recentHistoryMenu, { backgroundColor: theme.colors.surfaceAlt }]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open workout actions"
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    openHistoryActionMenu(workout.id);
+                  }}
+                  style={({ pressed }) => [
+                    styles.recentHistoryMenu,
+                    {
+                      backgroundColor: 'rgba(66,146,255,0.22)',
+                      borderColor: 'rgba(96,168,255,0.52)',
+                      opacity: pressed ? 0.78 : 1,
+                    },
+                  ]}
+                >
                   <EllipsisVertical size={18} color={theme.colors.info} />
-                </View>
+                </Pressable>
               </View>
 
               <View style={styles.recentHistoryMetrics}>
                 <View style={styles.recentHistoryMetric}>
-                  <Clock size={20} color={theme.colors.muted} />
+                  <Clock size={14} color={theme.colors.muted} />
                   <AppText muted style={styles.recentHistoryMetricText}>
                     {formatWorkoutDuration(workout)}
                   </AppText>
                 </View>
                 <View style={styles.recentHistoryMetric}>
-                  <Weight size={20} color={theme.colors.muted} />
+                  <Weight size={14} color={theme.colors.muted} />
                   <AppText muted style={styles.recentHistoryMetricText}>
                     {volumeKg.toLocaleString()} kg
                   </AppText>
                 </View>
                 <View style={styles.recentHistoryMetric}>
-                  <Trophy size={20} color={theme.colors.muted} />
+                  <Trophy size={14} color={theme.colors.muted} />
                   <AppText muted style={styles.recentHistoryMetricText}>
                     {prCount} PRs
                   </AppText>
                 </View>
               </View>
 
-              <View style={styles.recentHistoryTable}>
+              <View style={[styles.recentHistoryTable, { borderTopColor: theme.colors.border }]}>
                 <View style={styles.recentHistoryTableHeader}>
                   <AppText weight="800" style={styles.recentHistoryColumnTitle}>
                     Exercise
                   </AppText>
-                  <AppText weight="800" style={[styles.recentHistoryColumnTitle, styles.recentHistoryBestSetColumn]}>
+                  <AppText
+                    weight="800"
+                    style={[styles.recentHistoryColumnTitle, styles.recentHistoryBestSetColumn, styles.recentHistoryBestSetHeader]}
+                  >
                     Best Set
                   </AppText>
                 </View>
                 {exerciseRows.length ? (
                   exerciseRows.map((row) => (
                     <View key={row.id} style={styles.recentHistoryTableRow}>
-                      <AppText muted numberOfLines={1} style={styles.recentHistoryExerciseLabel}>
+                      <AppText numberOfLines={1} style={styles.recentHistoryExerciseLabel}>
                         {row.exerciseLabel}
                       </AppText>
-                      <AppText muted numberOfLines={1} style={[styles.recentHistoryBestSetValue, styles.recentHistoryBestSetColumn]}>
+                      <AppText numberOfLines={1} style={[styles.recentHistoryBestSetValue, styles.recentHistoryBestSetColumn]}>
                         {row.bestSetLabel}
                       </AppText>
                     </View>
@@ -2051,7 +2249,87 @@ export function WorkoutDashboardScreen() {
         onClose={closeHistoryDetails}
         onEdit={editHistoryWorkout}
       />
+
+      <Modal
+        transparent
+        visible={Boolean(historyActionSessionId)}
+        animationType="fade"
+        onRequestClose={closeHistoryActionMenu}
+      >
+        <View style={styles.historyActionOverlay} pointerEvents="box-none">
+          <Pressable style={styles.historyActionBackdrop} onPress={closeHistoryActionMenu} />
+          <View style={[styles.historyActionSheet, { borderColor: theme.colors.border, backgroundColor: 'rgba(12,16,23,0.98)' }]}>
+            <HistoryActionItem
+              icon={Pencil}
+              label="Edit Workout"
+              color={theme.colors.info}
+              onPress={handleHistoryActionEdit}
+            />
+            <HistoryActionItem
+              icon={Star}
+              label="Save as Template"
+              color={theme.colors.info}
+              onPress={handleHistoryActionSaveTemplate}
+            />
+            <HistoryActionItem
+              icon={Play}
+              label="Perform Again"
+              color={theme.colors.info}
+              onPress={handleHistoryActionPerformAgain}
+            />
+            <HistoryActionItem
+              icon={Share2}
+              label="Share"
+              color={theme.colors.info}
+              onPress={handleHistoryActionShare}
+            />
+            <HistoryActionItem
+              icon={Trash2}
+              label="Delete"
+              color={theme.colors.danger}
+              onPress={handleHistoryActionDelete}
+              destructive
+            />
+          </View>
+        </View>
+      </Modal>
     </>
+  );
+}
+
+function HistoryActionItem({
+  icon: Icon,
+  label,
+  color,
+  onPress,
+  destructive = false,
+}: {
+  icon: typeof Pencil;
+  label: string;
+  color: string;
+  onPress: () => void;
+  destructive?: boolean;
+}) {
+  const theme = useAppTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.historyActionRow,
+        {
+          borderBottomColor: theme.colors.border,
+          opacity: pressed ? 0.75 : 1,
+        },
+      ]}
+    >
+      <View style={[styles.historyActionIconWrap, { backgroundColor: destructive ? 'rgba(242,95,92,0.16)' : 'rgba(66,146,255,0.16)' }]}>
+        <Icon size={17} color={color} />
+      </View>
+      <AppText weight="800" style={{ color }}>
+        {label}
+      </AppText>
+    </Pressable>
   );
 }
 
@@ -2546,6 +2824,7 @@ const styles = StyleSheet.create({
   },
   savedTitle: {
     fontSize: 15,
+    lineHeight: 19,
   },
   summaryRow: {
     alignItems: 'center',
@@ -2567,71 +2846,123 @@ const styles = StyleSheet.create({
     width: StyleSheet.hairlineWidth,
   },
   recentHistoryCard: {
-    gap: 10,
+    borderRadius: 16,
+    borderColor: 'rgba(210,216,226,0.28)',
+    borderWidth: 1,
+    gap: 12,
+    padding: 16,
+  },
+  recentHistoryTitle: {
+    fontSize: 17,
+    lineHeight: 22,
   },
   recentHistoryHeader: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   recentHistoryHeaderCopy: {
     flex: 1,
-    gap: 4,
+    gap: 6,
     minWidth: 0,
-    paddingRight: 10,
+    paddingRight: 12,
   },
   recentHistoryMenu: {
     alignItems: 'center',
-    borderRadius: 16,
-    height: 36,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 42,
     justifyContent: 'center',
-    width: 48,
+    width: 50,
   },
   recentHistoryMetrics: {
     flexDirection: 'row',
-    gap: 14,
+    flexWrap: 'wrap',
+    gap: 16,
   },
   recentHistoryMetric: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 6,
+    gap: 5,
   },
   recentHistoryMetricText: {
-    fontSize: 15,
+    fontSize: 13,
+    lineHeight: 17,
   },
   recentHistoryTable: {
-    gap: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+    paddingTop: 8,
   },
   recentHistoryTableHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingTop: 2,
   },
   recentHistoryColumnTitle: {
-    fontSize: 16,
+    fontSize: 14,
+    lineHeight: 18,
   },
   recentHistoryBestSetColumn: {
-    width: '44%',
+    textAlign: 'right',
+    width: '38%',
+  },
+  recentHistoryBestSetHeader: {
+    paddingRight: 2,
   },
   recentHistoryTableRow: {
+    alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    minHeight: 24,
+    minHeight: 26,
   },
   recentHistoryExerciseLabel: {
+    color: '#D9E1EA',
     flex: 1,
-    fontSize: 16,
-    lineHeight: 22,
-    maxWidth: '56%',
-    paddingRight: 8,
+    fontSize: 15,
+    lineHeight: 21,
+    maxWidth: '62%',
+    paddingRight: 10,
   },
   recentHistoryBestSetValue: {
-    fontSize: 16,
-    lineHeight: 22,
+    color: '#D9E1EA',
+    fontSize: 15,
+    lineHeight: 21,
+    textAlign: 'right',
   },
   recentHistoryEmpty: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  historyActionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
+  historyActionBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(4,7,11,0.58)',
+  },
+  historyActionSheet: {
+    alignSelf: 'center',
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 34,
+    overflow: 'hidden',
+    width: '86%',
+  },
+  historyActionRow: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 58,
+    paddingHorizontal: 16,
+  },
+  historyActionIconWrap: {
+    alignItems: 'center',
+    borderRadius: 10,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
   },
   searchRow: {
     flexDirection: 'row',

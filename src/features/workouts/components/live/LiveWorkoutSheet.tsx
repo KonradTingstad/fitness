@@ -46,6 +46,12 @@ type EditableField = 'weightKg' | 'reps';
 
 const COLLAPSED_HEIGHT = 62;
 const CONTENT_HORIZONTAL_PADDING = 16;
+const MAX_WEIGHT_KG = 9999.9;
+const MAX_WEIGHT_INTEGER_DIGITS = 4;
+const MAX_WEIGHT_DECIMAL_DIGITS = 1;
+const MAX_REPS = 999;
+const MAX_REPS_DIGITS = 3;
+const MAX_RPE = 10;
 
 export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom, miniHorizontalInset, onExpand, onMinimize }: Props) {
   const theme = useAppTheme();
@@ -148,6 +154,7 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
   const finalizeFinishedWorkout = () => {
     queryClient.setQueryData(queryKeys.activeWorkout, null);
     queryClient.invalidateQueries({ queryKey: queryKeys.recentWorkouts });
+    queryClient.invalidateQueries({ queryKey: queryKeys.completedWorkoutCount });
     queryClient.invalidateQueries({ queryKey: queryKeys.progress });
     queryClient.invalidateQueries({ queryKey: queryKeys.workout(sessionId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.workoutSessions });
@@ -155,7 +162,7 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
     setActiveWorkout({ hasActiveWorkout: false, sessionId: null });
     setSessionId(null);
     onMinimize();
-    navigation.navigate('WorkoutSummary', { sessionId });
+    navigation.navigate('WorkoutCompletion', { sessionId });
   };
 
   const finishMutation = useMutation({
@@ -230,6 +237,28 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
   );
 
   const totalSets = useMemo(() => session.data?.exercises.flatMap((exercise) => exercise.sets).length ?? 0, [session.data]);
+  const completedSetFieldErrors = useMemo(() => {
+    if (!session.data) {
+      return {} as Record<string, { reps: boolean }>;
+    }
+
+    const errors: Record<string, { reps: boolean }> = {};
+    for (const exercise of session.data.exercises) {
+      for (const set of exercise.sets) {
+        if (!set.isCompleted) {
+          continue;
+        }
+        const draft = draftBySetId[set.id];
+        const reps = toOptionalInteger(draft?.reps ?? (set.reps != null ? String(set.reps) : ''), 0, MAX_REPS);
+        const repsMissing = reps == null;
+        if (repsMissing) {
+          errors[set.id] = { reps: true };
+        }
+      }
+    }
+    return errors;
+  }, [draftBySetId, session.data]);
+  const invalidCompletedSetCount = useMemo(() => Object.keys(completedSetFieldErrors).length, [completedSetFieldErrors]);
 
   const fieldOrder = useMemo(() => {
     if (!session.data) {
@@ -269,9 +298,9 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
       return;
     }
     const patch: Partial<WorkoutSet> = {
-      weightKg: toOptionalNumber(draft.weightKg),
-      reps: toOptionalInteger(draft.reps),
-      rpe: toOptionalNumber(draft.rpe),
+      weightKg: toOptionalNumber(draft.weightKg, 0, MAX_WEIGHT_KG),
+      reps: toOptionalInteger(draft.reps, 0, MAX_REPS),
+      rpe: toOptionalNumber(draft.rpe, 0, MAX_RPE),
     };
     updateSetMutation.mutate({ setId, patch });
   };
@@ -316,7 +345,7 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
         ...current,
         [setId]: {
           ...existing,
-          [field]: sanitizeValue(updater(existing[field])),
+          [field]: sanitizeValue(updater(existing[field]), field),
         },
       };
     });
@@ -351,9 +380,9 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
       const parsed = Number.parseFloat(value.replace(',', '.'));
       const next = Number.isFinite(parsed) ? parsed + delta : delta;
       if (activeInput.field === 'reps') {
-        return String(Math.max(0, Math.round(next)));
+        return String(Math.max(0, Math.min(MAX_REPS, Math.round(next))));
       }
-      return formatNumeric(Math.max(-999, Math.min(999, Math.round(next * 10) / 10)));
+      return formatNumeric(Math.max(0, Math.min(MAX_WEIGHT_KG, Math.round(next * 10) / 10)));
     });
   };
 
@@ -422,6 +451,10 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
 
   const handleFinish = () => {
     if (finishMutation.isPending || finishAndUpdateRoutineMutation.isPending) {
+      return;
+    }
+    if (invalidCompletedSetCount > 0) {
+      Alert.alert('Missing reps', 'Fill in reps for all completed sets before finishing the workout.');
       return;
     }
     const prompt =
@@ -715,6 +748,7 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
                 <SetLoggingTable
                   exercises={session.data.exercises}
                   draftBySetId={draftBySetId}
+                  validationErrorsBySetId={completedSetFieldErrors}
                   activeInput={activeInput}
                   onSelectInput={handleSelectInput}
                   onOpenSetTypeMenu={setSetTypeSetId}
@@ -800,8 +834,27 @@ export function LiveWorkoutSheet({ sessionId, expanded, bottomInset, miniBottom,
   );
 }
 
-function sanitizeValue(value: string): string {
-  return value.replace(/,/g, '.').replace(/[^0-9.-]/g, '');
+function sanitizeValue(value: string, field: EditableField | 'rpe'): string {
+  const normalized = value.replace(/,/g, '.');
+
+  if (field === 'reps') {
+    return normalized.replace(/\D/g, '').slice(0, MAX_REPS_DIGITS);
+  }
+
+  const cleaned = normalized.replace(/[^0-9.]/g, '');
+  if (!cleaned) {
+    return '';
+  }
+
+  const hasDot = cleaned.includes('.');
+  const [rawInteger, ...decimalParts] = cleaned.split('.');
+  const integer = rawInteger.replace(/^0+(?=\d)/, '').slice(0, MAX_WEIGHT_INTEGER_DIGITS) || '0';
+  const decimal = decimalParts.join('').slice(0, MAX_WEIGHT_DECIMAL_DIGITS);
+
+  if (!hasDot) {
+    return integer;
+  }
+  return `${integer}.${decimal}`;
 }
 
 function formatNumeric(value: number): string {
@@ -812,20 +865,20 @@ function formatNumeric(value: number): string {
   return String(Math.round(value * 10) / 10);
 }
 
-function toOptionalNumber(value: string): number | null {
+function toOptionalNumber(value: string, min: number, max: number): number | null {
   const parsed = Number.parseFloat(value.replace(',', '.').trim());
   if (!Number.isFinite(parsed)) {
     return null;
   }
-  return parsed;
+  return Math.min(max, Math.max(min, parsed));
 }
 
-function toOptionalInteger(value: string): number | null {
+function toOptionalInteger(value: string, min: number, max: number): number | null {
   const parsed = Number.parseInt(value.trim(), 10);
   if (!Number.isFinite(parsed)) {
     return null;
   }
-  return parsed;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 const styles = StyleSheet.create({

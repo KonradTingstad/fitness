@@ -29,5 +29,8 @@ export const queryKeys = {
   progressWidget: (id: string) => ['progressWidget', id] as const,
   progressWidgetData: (id: string, updatedAt: string) => ['progressWidgetData', id, updatedAt] as const,
   exercises: ['exercises'] as const,
+  exerciseSearch: (query = '', primaryMuscle = 'All', equipment = 'All', category = 'All') =>
+    ['exerciseSearch', query, primaryMuscle, equipment, category] as const,
+  exerciseFilterOptions: ['exerciseFilterOptions'] as const,
   exerciseHistory: (id: string) => ['exerciseHistory', id] as const,
 };

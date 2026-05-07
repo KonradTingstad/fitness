@@ -435,7 +435,6 @@ export function WorkoutSummaryScreen() {
         name: exercise.name,
         primaryMuscle: exercise.primaryMuscle || 'Body',
         equipment: exercise.equipment || 'Equipment',
-        instructions: null,
         isCustom: false,
       },
       sortOrder: exerciseIndex + 1,

@@ -34,7 +34,7 @@ export function FoodSearchScreen() {
   const mode: FoodItemType = route.params.mode ?? 'food';
   const modeLabel = mode === 'drink' ? 'drink' : 'food';
   const modePluralLabel = mode === 'drink' ? 'drinks' : 'foods';
-  const foods = useFoodSearch(query, mode);
+  const foods = useFoodSearch(query, mode, { enabled: query.trim().length > 0 });
   const recent = useRecentFoods(mode);
   const suggestions = useFrequentlyLoggedFoods(mode);
 
@@ -111,6 +111,24 @@ function FoodRow({
   onQuickAdd: () => void;
 }) {
   const theme = useAppTheme();
+  const amountUnit = food.baseUnit ?? (food.itemType === 'drink' ? 'ml' : 'g');
+  const basisLabel = food.nutritionBasis === 'per_100ml' ? 'per 100 ml' : 'per 100 g';
+  const basisCalories = Number.isFinite(food.caloriesPer100) ? Math.round(food.caloriesPer100 ?? 0) : Math.round(food.calories);
+  const fixedAmountLine =
+    Number.isFinite(food.servingSize) && food.servingSize > 0
+      ? `${Math.round(food.servingSize)} ${food.servingUnit || amountUnit}`
+      : Number.isFinite(food.packageSize) && (food.packageSize ?? 0) > 0 && food.packageUnit
+        ? `${Math.round(food.packageSize ?? 0)} ${food.packageUnit}`
+        : null;
+  const packageLine =
+    Number.isFinite(food.packageSize) && (food.packageSize ?? 0) > 0 && food.packageUnit
+      ? `${Math.round(food.packageSize ?? 0)} ${food.packageUnit}`
+      : null;
+  const servingLine = food.servingMode === 'fixed_package'
+    ? `${food.servingLabel ?? '1 enhet'}${fixedAmountLine ? ` • ${fixedAmountLine}` : packageLine ? ` • ${packageLine}` : ''}`
+    : food.servingMode === 'suggested_amount'
+      ? `${Math.round(food.servingSize)} ${amountUnit}${food.servingLabel ? ` • ${food.servingLabel}` : ''}`
+      : `${basisLabel} basis`;
   return (
     <NutritionCard style={styles.foodCard}>
       <View style={styles.foodRow}>
@@ -119,8 +137,10 @@ function FoodRow({
             {food.name}
           </AppText>
           <AppText variant="small" muted style={styles.foodMeta}>
-            {food.brandName ? `${food.brandName} • ` : ''}
-            {food.servingSize} {food.servingUnit} • {food.calories} kcal
+            {food.brandName ? `${food.brandName} • ` : ''}{servingLine}
+          </AppText>
+          <AppText variant="small" muted style={styles.foodMeta}>
+            {basisCalories} kcal • {basisLabel}
           </AppText>
           <FoodMacroChips protein={food.proteinG} carbs={food.carbsG} fat={food.fatG} />
         </View>

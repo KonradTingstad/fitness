@@ -17,11 +17,20 @@ import {
 type ExerciseRow = {
   id: string;
   user_id: string | null;
+  source: string | null;
+  source_id: string | null;
+  category: string | null;
+  force: string | null;
+  mechanic: string | null;
   name: string;
   primary_muscle: string;
   equipment: string;
-  instructions: string | null;
+  image_paths: string | null;
+  is_favorite: number;
   is_custom: number;
+  primary_muscles?: string | null;
+  secondary_muscles?: string | null;
+  equipment_options?: string | null;
 };
 
 type RoutineRow = {
@@ -165,6 +174,52 @@ export interface WorkoutSummary {
   prs: Array<{ label: string; value: string }>;
 }
 
+export interface ExerciseSearchFilters {
+  query?: string;
+  primaryMuscle?: string;
+  equipment?: string;
+  category?: string;
+  limit?: number;
+}
+
+export interface ExerciseFilterOptions {
+  primaryMuscles: string[];
+  equipment: string[];
+  categories: string[];
+}
+
+export async function setExerciseFavorite(exerciseId: string, isFavorite: boolean, userId = DEMO_USER_ID): Promise<boolean> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const row = await db.getFirstAsync<{ id: string; user_id: string | null; is_favorite: number }>(
+    `SELECT id, user_id, is_favorite
+     FROM exercises
+     WHERE id = ? AND deleted_at IS NULL
+     LIMIT 1`,
+    [exerciseId],
+  );
+
+  if (!row) {
+    throw new Error('Exercise not found.');
+  }
+  if (row.user_id && row.user_id !== userId) {
+    throw new Error('Exercise belongs to another user.');
+  }
+
+  const nextValue = isFavorite ? 1 : 0;
+  if (row.is_favorite === nextValue) {
+    return Boolean(row.is_favorite);
+  }
+
+  await db.runAsync(
+    `UPDATE exercises
+     SET is_favorite = ?, updated_at = ?, version = version + 1
+     WHERE id = ?`,
+    [nextValue, now, exerciseId],
+  );
+  return Boolean(nextValue);
+}
+
 export interface CompletedWorkoutSetInput {
   id?: string;
   setType: SetType;
@@ -263,6 +318,47 @@ export interface SaveRoutineTemplateInput {
   exercises: RoutineTemplateExerciseInput[];
 }
 
+function sqlPlaceholders(count: number): string {
+  return Array.from({ length: count }, () => '?').join(', ');
+}
+
+function exerciseSelect(alias: string): string {
+  return `
+    ${alias}.id,
+    ${alias}.user_id,
+    ${alias}.source,
+    ${alias}.source_id,
+    ${alias}.category,
+    ${alias}.force,
+    ${alias}.mechanic,
+    ${alias}.name,
+    ${alias}.primary_muscle,
+    ${alias}.equipment,
+    ${alias}.image_paths,
+    ${alias}.is_favorite,
+    ${alias}.is_custom,
+    (
+      SELECT GROUP_CONCAT(muscle_group, '||')
+      FROM exercise_muscle_groups
+      WHERE exercise_id = ${alias}.id AND role = 'primary' AND deleted_at IS NULL
+    ) AS primary_muscles,
+    (
+      SELECT GROUP_CONCAT(muscle_group, '||')
+      FROM exercise_muscle_groups
+      WHERE exercise_id = ${alias}.id AND role = 'secondary' AND deleted_at IS NULL
+    ) AS secondary_muscles,
+    (
+      SELECT GROUP_CONCAT(equipment, '||')
+      FROM exercise_equipment
+      WHERE exercise_id = ${alias}.id AND deleted_at IS NULL
+    ) AS equipment_options
+  `;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
 const PROGRAM_ACTIVITY_DETAILS: Record<Exclude<ProgramActivityType, 'strength'>, { title: string; subtitle: string; estimatedDurationMinutes: number }> = {
   cardio: { title: 'Cardio', subtitle: 'Moderate · ~35 min', estimatedDurationMinutes: 35 },
   padel: { title: 'Padel', subtitle: 'Match / Training', estimatedDurationMinutes: 60 },
@@ -272,14 +368,115 @@ const PROGRAM_ACTIVITY_DETAILS: Record<Exclude<ProgramActivityType, 'strength'>,
 };
 
 export async function listExercises(userId = DEMO_USER_ID): Promise<Exercise[]> {
+  return searchExercises({ limit: 1000 }, userId);
+}
+
+export async function searchExercises(filters: ExerciseSearchFilters = {}, userId = DEMO_USER_ID): Promise<Exercise[]> {
   const db = await getDatabase();
+  const where = ['e.deleted_at IS NULL', '(e.user_id IS NULL OR e.user_id = ?)'];
+  const params: Array<string | number> = [userId];
+  const query = filters.query?.trim().toLowerCase() ?? '';
+
+  if (query) {
+    const likeQuery = `%${escapeLike(query)}%`;
+    where.push(
+      `(LOWER(e.name) LIKE ? ESCAPE '\\'
+        OR LOWER(e.primary_muscle) LIKE ? ESCAPE '\\'
+        OR LOWER(e.equipment) LIKE ? ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM exercise_muscle_groups mg
+          WHERE mg.exercise_id = e.id
+            AND mg.deleted_at IS NULL
+            AND LOWER(mg.muscle_group) LIKE ? ESCAPE '\\'
+        ))`,
+    );
+    params.push(likeQuery, likeQuery, likeQuery, likeQuery);
+  }
+
+  if (filters.primaryMuscle && filters.primaryMuscle !== 'All') {
+    const muscle = filters.primaryMuscle.trim().toLowerCase();
+    where.push(
+      `(LOWER(e.primary_muscle) = ?
+        OR EXISTS (
+          SELECT 1 FROM exercise_muscle_groups mg
+          WHERE mg.exercise_id = e.id
+            AND mg.deleted_at IS NULL
+            AND LOWER(mg.muscle_group) = ?
+        ))`,
+    );
+    params.push(muscle, muscle);
+  }
+
+  if (filters.equipment && filters.equipment !== 'All') {
+    const equipment = filters.equipment.trim().toLowerCase();
+    where.push(
+      `(LOWER(e.equipment) = ?
+        OR EXISTS (
+          SELECT 1 FROM exercise_equipment ee
+          WHERE ee.exercise_id = e.id
+            AND ee.deleted_at IS NULL
+            AND LOWER(ee.equipment) = ?
+        ))`,
+    );
+    params.push(equipment, equipment);
+  }
+
+  if (filters.category && filters.category !== 'All') {
+    where.push('LOWER(COALESCE(e.category, ?)) = ?');
+    params.push('', filters.category.trim().toLowerCase());
+  }
+
+  const limit = filters.limit == null ? 300 : Math.max(1, Math.min(Math.round(filters.limit), 1000));
+  params.push(limit);
   const rows = await db.getAllAsync<ExerciseRow>(
-    `SELECT * FROM exercises
-     WHERE deleted_at IS NULL AND (user_id IS NULL OR user_id = ?)
-     ORDER BY is_custom DESC, name ASC`,
-    [userId],
+    `SELECT ${exerciseSelect('e')}
+     FROM exercises e
+     WHERE ${where.join(' AND ')}
+     ORDER BY e.is_favorite DESC, e.is_custom DESC, e.name COLLATE NOCASE ASC
+     LIMIT ?`,
+    params,
   );
   return rows.map(mapExercise);
+}
+
+export async function getExerciseFilterOptions(userId = DEMO_USER_ID): Promise<ExerciseFilterOptions> {
+  const db = await getDatabase();
+  const exerciseRows = await db.getAllAsync<{ primary_muscle: string | null; equipment: string | null; category: string | null }>(
+    `SELECT primary_muscle, equipment, category
+     FROM exercises
+     WHERE deleted_at IS NULL AND (user_id IS NULL OR user_id = ?)`,
+    [userId],
+  );
+  const muscleRows = await db.getAllAsync<{ value: string | null }>(
+    `SELECT DISTINCT mg.muscle_group AS value
+     FROM exercise_muscle_groups mg
+     JOIN exercises e ON e.id = mg.exercise_id
+     WHERE mg.deleted_at IS NULL
+       AND e.deleted_at IS NULL
+       AND (e.user_id IS NULL OR e.user_id = ?)`,
+    [userId],
+  );
+  const equipmentRows = await db.getAllAsync<{ value: string | null }>(
+    `SELECT DISTINCT ee.equipment AS value
+     FROM exercise_equipment ee
+     JOIN exercises e ON e.id = ee.exercise_id
+     WHERE ee.deleted_at IS NULL
+       AND e.deleted_at IS NULL
+       AND (e.user_id IS NULL OR e.user_id = ?)`,
+    [userId],
+  );
+
+  return {
+    primaryMuscles: uniqueDisplayValues([
+      ...exerciseRows.map((row) => row.primary_muscle),
+      ...muscleRows.map((row) => row.value),
+    ]),
+    equipment: uniqueDisplayValues([
+      ...exerciseRows.map((row) => row.equipment),
+      ...equipmentRows.map((row) => row.value),
+    ]),
+    categories: uniqueDisplayValues(exerciseRows.map((row) => row.category)),
+  };
 }
 
 export async function listRoutines(userId = DEMO_USER_ID): Promise<Routine[]> {
@@ -288,11 +485,7 @@ export async function listRoutines(userId = DEMO_USER_ID): Promise<Routine[]> {
     'SELECT * FROM routines WHERE user_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, name ASC',
     [userId],
   );
-  const routines: Routine[] = [];
-  for (const row of rows) {
-    routines.push(await hydrateRoutine(row));
-  }
-  return routines;
+  return Promise.all(rows.map((row) => hydrateRoutine(row)));
 }
 
 export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userId = DEMO_USER_ID): Promise<string> {
@@ -311,6 +504,7 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
     : null;
 
   let routineId: string;
+  let routineSortOrder = existingRoutine?.sort_order ?? 1;
   if (existingRoutine) {
     routineId = existingRoutine.id;
     await db.runAsync(
@@ -319,18 +513,29 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
        WHERE id = ?`,
       [name, input.notes?.trim() || null, now, routineId],
     );
+    await enqueueSync('routine', routineId, 'update', {
+      name,
+      notes: input.notes?.trim() || null,
+      sortOrder: routineSortOrder,
+    });
   } else {
     const nextSortOrder = await db.getFirstAsync<{ next_order: number }>(
       'SELECT COALESCE(MAX(sort_order), 0) + 1 as next_order FROM routines WHERE user_id = ? AND deleted_at IS NULL',
       [userId],
     );
+    routineSortOrder = nextSortOrder?.next_order ?? 1;
     routineId = input.routineId ?? createId('routine');
     await db.runAsync(
       `INSERT INTO routines
       (id, user_id, name, notes, sort_order, created_at, updated_at, deleted_at, sync_status, version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [routineId, userId, name, input.notes?.trim() || null, nextSortOrder?.next_order ?? 1, now, now, null, 'pending', 1],
+      [routineId, userId, name, input.notes?.trim() || null, routineSortOrder, now, now, null, 'pending', 1],
     );
+    await enqueueSync('routine', routineId, 'insert', {
+      name,
+      notes: input.notes?.trim() || null,
+      sortOrder: routineSortOrder,
+    });
   }
 
   const existingRoutineExercises = await db.getAllAsync<{ id: string }>(
@@ -339,12 +544,22 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
   );
 
   for (const row of existingRoutineExercises) {
+    const existingSetTemplateRows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM routine_exercise_set_templates WHERE routine_exercise_id = ? AND deleted_at IS NULL',
+      [row.id],
+    );
     await db.runAsync(
       `UPDATE routine_exercise_set_templates
        SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
        WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
       [now, now, row.id],
     );
+    for (const setTemplateRow of existingSetTemplateRows) {
+      await enqueueSync('routine_set_template', setTemplateRow.id, 'delete', {
+        id: setTemplateRow.id,
+        routineExerciseId: row.id,
+      });
+    }
   }
 
   await db.runAsync(
@@ -353,9 +568,13 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
      WHERE routine_id = ? AND deleted_at IS NULL`,
     [now, now, routineId],
   );
+  for (const row of existingRoutineExercises) {
+    await enqueueSync('routine_exercise', row.id, 'delete', { id: row.id, routineId });
+  }
 
   for (const [exerciseIndex, exerciseInput] of input.exercises.entries()) {
     const routineExerciseId = createId('routine_exercise');
+    const normalizedDefaultRestSeconds = Math.max(0, Math.round(exerciseInput.defaultRestSeconds ?? 120));
     await db.runAsync(
       `INSERT INTO routine_exercises
       (id, routine_id, exercise_id, sort_order, superset_group, notes, default_rest_seconds, created_at, updated_at, deleted_at, sync_status, version)
@@ -367,7 +586,7 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
         exerciseIndex + 1,
         exerciseInput.supersetGroup ?? null,
         exerciseInput.notes?.trim() || null,
-        Math.max(0, Math.round(exerciseInput.defaultRestSeconds ?? 120)),
+        normalizedDefaultRestSeconds,
         now,
         now,
         null,
@@ -375,6 +594,14 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
         1,
       ],
     );
+    await enqueueSync('routine_exercise', routineExerciseId, 'insert', {
+      routineId,
+      exerciseId: exerciseInput.exerciseId,
+      sortOrder: exerciseIndex + 1,
+      supersetGroup: exerciseInput.supersetGroup ?? null,
+      notes: exerciseInput.notes?.trim() || null,
+      defaultRestSeconds: normalizedDefaultRestSeconds,
+    });
 
     const sets = exerciseInput.sets.length ? exerciseInput.sets : [{ setType: 'normal' as const }];
     for (const [setIndex, setInput] of sets.entries()) {
@@ -383,23 +610,28 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
         setInput.targetWeightKg != null && Number.isFinite(setInput.targetWeightKg)
           ? Math.max(0, Math.round(setInput.targetWeightKg * 10) / 10)
           : null;
+      const durationSeconds =
+        setInput.durationSeconds != null && Number.isFinite(setInput.durationSeconds) ? Math.max(0, Math.round(setInput.durationSeconds)) : null;
+      const distanceMeters =
+        setInput.distanceMeters != null && Number.isFinite(setInput.distanceMeters)
+          ? Math.max(0, Math.round(setInput.distanceMeters * 100) / 100)
+          : null;
+      const routineSetTemplateId = createId('routine_set_template');
 
       await db.runAsync(
         `INSERT INTO routine_exercise_set_templates
         (id, routine_exercise_id, sort_order, set_type, target_reps_min, target_reps_max, target_weight_kg, duration_seconds, distance_meters, created_at, updated_at, deleted_at, sync_status, version)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          createId('routine_set_template'),
+          routineSetTemplateId,
           routineExerciseId,
           setIndex + 1,
           setInput.setType ?? 'normal',
           targetReps,
           targetReps,
           targetWeightKg,
-          setInput.durationSeconds != null && Number.isFinite(setInput.durationSeconds) ? Math.max(0, Math.round(setInput.durationSeconds)) : null,
-          setInput.distanceMeters != null && Number.isFinite(setInput.distanceMeters)
-            ? Math.max(0, Math.round(setInput.distanceMeters * 100) / 100)
-            : null,
+          durationSeconds,
+          distanceMeters,
           now,
           now,
           null,
@@ -407,6 +639,16 @@ export async function saveRoutineTemplate(input: SaveRoutineTemplateInput, userI
           1,
         ],
       );
+      await enqueueSync('routine_set_template', routineSetTemplateId, 'insert', {
+        routineExerciseId,
+        sortOrder: setIndex + 1,
+        setType: setInput.setType ?? 'normal',
+        targetRepsMin: targetReps,
+        targetRepsMax: targetReps,
+        targetWeightKg,
+        durationSeconds,
+        distanceMeters,
+      });
     }
   }
 
@@ -429,12 +671,19 @@ export async function deleteRoutineTemplate(routineId: string, userId = DEMO_USE
     [routineId],
   );
   for (const row of routineExerciseRows) {
+    const setRows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM routine_exercise_set_templates WHERE routine_exercise_id = ? AND deleted_at IS NULL',
+      [row.id],
+    );
     await db.runAsync(
       `UPDATE routine_exercise_set_templates
        SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
        WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
       [now, now, row.id],
     );
+    for (const setRow of setRows) {
+      await enqueueSync('routine_set_template', setRow.id, 'delete', { id: setRow.id, routineExerciseId: row.id });
+    }
   }
 
   await db.runAsync(
@@ -443,12 +692,30 @@ export async function deleteRoutineTemplate(routineId: string, userId = DEMO_USE
      WHERE routine_id = ? AND deleted_at IS NULL`,
     [now, now, routineId],
   );
+  for (const row of routineExerciseRows) {
+    await enqueueSync('routine_exercise', row.id, 'delete', { id: row.id, routineId });
+  }
 
   await db.runAsync(
     `UPDATE routines
      SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
      WHERE id = ? AND deleted_at IS NULL`,
     [now, now, routineId],
+  );
+  await enqueueSync('routine', routineId, 'delete', { id: routineId });
+
+  const linkedProgramDays = await db.getAllAsync<{
+    id: string;
+    local_date: string;
+    activity_type: string;
+    title: string;
+    estimated_duration_minutes: number | null;
+    metadata: string | null;
+  }>(
+    `SELECT id, local_date, activity_type, title, estimated_duration_minutes, metadata
+     FROM workout_program_days
+     WHERE user_id = ? AND routine_id = ? AND deleted_at IS NULL`,
+    [userId, routineId],
   );
 
   await db.runAsync(
@@ -457,6 +724,17 @@ export async function deleteRoutineTemplate(routineId: string, userId = DEMO_USE
      WHERE user_id = ? AND routine_id = ? AND deleted_at IS NULL`,
     [now, userId, routineId],
   );
+
+  for (const day of linkedProgramDays) {
+    await enqueueSync('program_day', day.id, 'update', {
+      localDate: day.local_date,
+      activityType: day.activity_type,
+      title: day.title,
+      routineId: null,
+      estimatedDurationMinutes: day.estimated_duration_minutes ?? null,
+      metadata: day.metadata ?? null,
+    });
+  }
 }
 
 export async function getActiveWorkout(userId = DEMO_USER_ID): Promise<WorkoutSession | null> {
@@ -485,11 +763,7 @@ export async function getRecentWorkouts(userId = DEMO_USER_ID, limit = 10): Prom
      ORDER BY started_at DESC LIMIT ?`,
     [userId, limit],
   );
-  const sessions: WorkoutSession[] = [];
-  for (const row of rows) {
-    sessions.push(await hydrateWorkoutSession(row));
-  }
-  return sessions;
+  return Promise.all(rows.map((row) => hydrateWorkoutSession(row)));
 }
 
 export async function getCompletedWorkoutCount(userId = DEMO_USER_ID): Promise<number> {
@@ -518,11 +792,7 @@ export async function listWorkoutSessionsForRange(
      ORDER BY started_at DESC`,
     [userId, startLocalDate, endLocalDate],
   );
-  const sessions: WorkoutSession[] = [];
-  for (const row of rows) {
-    sessions.push(await hydrateWorkoutSession(row));
-  }
-  return sessions;
+  return Promise.all(rows.map((row) => hydrateWorkoutSession(row)));
 }
 
 export async function listWorkoutPlansForRange(
@@ -621,15 +891,24 @@ export async function upsertProgramScheduleDay(
        WHERE id = ?`,
       [input.activityType, input.title, routineId, estimatedDurationMinutes, metadata, now, existing.id],
     );
+    await enqueueSync('program_day', existing.id, 'update', {
+      localDate: input.localDate,
+      activityType: input.activityType,
+      title: input.title,
+      routineId,
+      estimatedDurationMinutes,
+      metadata,
+    });
     return;
   }
 
+  const programDayId = createId('program_day');
   await db.runAsync(
     `INSERT INTO workout_program_days
     (id, user_id, local_date, activity_type, title, routine_id, estimated_duration_minutes, metadata, created_at, updated_at, deleted_at, sync_status, version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      createId('program_day'),
+      programDayId,
       userId,
       input.localDate,
       input.activityType,
@@ -644,6 +923,14 @@ export async function upsertProgramScheduleDay(
       1,
     ],
   );
+  await enqueueSync('program_day', programDayId, 'insert', {
+    localDate: input.localDate,
+    activityType: input.activityType,
+    title: input.title,
+    routineId,
+    estimatedDurationMinutes,
+    metadata,
+  });
 }
 
 export async function listProgramDayOutcomesForRange(
@@ -686,15 +973,20 @@ export async function upsertProgramDayOutcome(
        WHERE id = ?`,
       [input.status, now, existing.id],
     );
+    await enqueueSync('program_day_outcome', existing.id, 'update', {
+      localDate: input.localDate,
+      status: input.status,
+    });
     return;
   }
 
+  const dayOutcomeId = createId('program_day_outcome');
   await db.runAsync(
     `INSERT INTO workout_program_day_outcomes
     (id, user_id, local_date, status, created_at, updated_at, deleted_at, sync_status, version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      createId('program_day_outcome'),
+      dayOutcomeId,
       userId,
       input.localDate,
       input.status,
@@ -705,6 +997,10 @@ export async function upsertProgramDayOutcome(
       1,
     ],
   );
+  await enqueueSync('program_day_outcome', dayOutcomeId, 'insert', {
+    localDate: input.localDate,
+    status: input.status,
+  });
 }
 
 export async function startWorkoutFromRoutine(routineId: string, userId = DEMO_USER_ID): Promise<string> {
@@ -1238,12 +1534,19 @@ export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<v
   );
 
   for (const row of existingRoutineExercises) {
+    const setRows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM routine_exercise_set_templates WHERE routine_exercise_id = ? AND deleted_at IS NULL',
+      [row.id],
+    );
     await db.runAsync(
       `UPDATE routine_exercise_set_templates
        SET deleted_at = ?, updated_at = ?, sync_status = 'pending', version = version + 1
        WHERE routine_exercise_id = ? AND deleted_at IS NULL`,
       [now, now, row.id],
     );
+    for (const setRow of setRows) {
+      await enqueueSync('routine_set_template', setRow.id, 'delete', { id: setRow.id, routineExerciseId: row.id });
+    }
   }
 
   await db.runAsync(
@@ -1252,6 +1555,9 @@ export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<v
      WHERE routine_id = ? AND deleted_at IS NULL`,
     [now, now, routineId],
   );
+  for (const row of existingRoutineExercises) {
+    await enqueueSync('routine_exercise', row.id, 'delete', { id: row.id, routineId });
+  }
 
   for (const [exerciseIndex, exercise] of workout.exercises.entries()) {
     const routineExerciseId = createId('routine_exercise');
@@ -1274,15 +1580,24 @@ export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<v
         1,
       ],
     );
+    await enqueueSync('routine_exercise', routineExerciseId, 'insert', {
+      routineId,
+      exerciseId: exercise.exerciseId,
+      sortOrder: exerciseIndex + 1,
+      supersetGroup: exercise.supersetGroup ?? null,
+      notes: exercise.notes ?? null,
+      defaultRestSeconds: 120,
+    });
 
     for (const [setIndex, set] of exercise.sets.entries()) {
       const targetReps = set.reps ?? null;
+      const setTemplateId = createId('routine_set_template');
       await db.runAsync(
         `INSERT INTO routine_exercise_set_templates
         (id, routine_exercise_id, sort_order, set_type, target_reps_min, target_reps_max, target_weight_kg, duration_seconds, distance_meters, created_at, updated_at, deleted_at, sync_status, version)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          createId('routine_set_template'),
+          setTemplateId,
           routineExerciseId,
           setIndex + 1,
           set.setType,
@@ -1298,6 +1613,16 @@ export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<v
           1,
         ],
       );
+      await enqueueSync('routine_set_template', setTemplateId, 'insert', {
+        routineExerciseId,
+        sortOrder: setIndex + 1,
+        setType: set.setType,
+        targetRepsMin: targetReps,
+        targetRepsMax: targetReps,
+        targetWeightKg: set.weightKg ?? null,
+        durationSeconds: set.durationSeconds ?? null,
+        distanceMeters: set.distanceMeters ?? null,
+      });
     }
   }
 
@@ -1307,6 +1632,7 @@ export async function applyWorkoutSessionToRoutine(sessionId: string): Promise<v
      WHERE id = ?`,
     [now, routineId],
   );
+  await enqueueSync('routine', routineId, 'update', { updatedAt: now });
 }
 
 export async function getWorkoutSummary(sessionId: string): Promise<WorkoutSummary> {
@@ -1338,7 +1664,10 @@ export async function getExerciseHistory(exerciseId: string): Promise<{
   volumeBySession: Array<{ label: string; value: number }>;
 }> {
   const db = await getDatabase();
-  const exerciseRow = await db.getFirstAsync<ExerciseRow>('SELECT * FROM exercises WHERE id = ?', [exerciseId]);
+  const exerciseRow = await db.getFirstAsync<ExerciseRow>(
+    `SELECT ${exerciseSelect('e')} FROM exercises e WHERE e.id = ?`,
+    [exerciseId],
+  );
   if (!exerciseRow) {
     throw new Error('Exercise not found');
   }
@@ -1538,15 +1867,49 @@ async function hydrateRoutine(row: RoutineRow): Promise<Routine> {
     'SELECT * FROM routine_exercises WHERE routine_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
     [row.id],
   );
+  if (!exerciseRows.length) {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      name: row.name,
+      notes: row.notes,
+      sortOrder: row.sort_order,
+      exercises: [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      deletedAt: row.deleted_at,
+      syncStatus: row.sync_status,
+      version: row.version,
+    };
+  }
+
+  const exerciseIds = Array.from(new Set(exerciseRows.map((exerciseRow) => exerciseRow.exercise_id)));
+  const routineExerciseIds = exerciseRows.map((exerciseRow) => exerciseRow.id);
+  const [exerciseEntities, setRows] = await Promise.all([
+    db.getAllAsync<ExerciseRow>(
+      `SELECT ${exerciseSelect('e')} FROM exercises e WHERE e.id IN (${sqlPlaceholders(exerciseIds.length)})`,
+      exerciseIds,
+    ),
+    db.getAllAsync<RoutineSetRow>(
+      `SELECT * FROM routine_exercise_set_templates
+       WHERE routine_exercise_id IN (${sqlPlaceholders(routineExerciseIds.length)}) AND deleted_at IS NULL
+       ORDER BY routine_exercise_id ASC, sort_order ASC`,
+      routineExerciseIds,
+    ),
+  ]);
+
+  const exerciseById = new Map(exerciseEntities.map((exercise) => [exercise.id, exercise]));
+  const setRowsByRoutineExerciseId = new Map<string, RoutineSetRow[]>();
+  for (const setRow of setRows) {
+    const existing = setRowsByRoutineExerciseId.get(setRow.routine_exercise_id) ?? [];
+    existing.push(setRow);
+    setRowsByRoutineExerciseId.set(setRow.routine_exercise_id, existing);
+  }
+
   const exercises: RoutineExercise[] = [];
   for (const exerciseRow of exerciseRows) {
-    const [exercise, setRows] = await Promise.all([
-      db.getFirstAsync<ExerciseRow>('SELECT * FROM exercises WHERE id = ?', [exerciseRow.exercise_id]),
-      db.getAllAsync<RoutineSetRow>(
-        'SELECT * FROM routine_exercise_set_templates WHERE routine_exercise_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
-        [exerciseRow.id],
-      ),
-    ]);
+    const exercise = exerciseById.get(exerciseRow.exercise_id);
+    const routineSetRows = setRowsByRoutineExerciseId.get(exerciseRow.id) ?? [];
     exercises.push({
       id: exerciseRow.id,
       routineId: exerciseRow.routine_id,
@@ -1556,7 +1919,7 @@ async function hydrateRoutine(row: RoutineRow): Promise<Routine> {
       supersetGroup: exerciseRow.superset_group,
       notes: exerciseRow.notes,
       defaultRestSeconds: exerciseRow.default_rest_seconds,
-      setTemplates: setRows.map(mapRoutineSet),
+      setTemplates: routineSetRows.map(mapRoutineSet),
       createdAt: exerciseRow.created_at,
       updatedAt: exerciseRow.updated_at,
       deletedAt: exerciseRow.deleted_at,
@@ -1585,15 +1948,52 @@ async function hydrateWorkoutSession(row: WorkoutSessionRow): Promise<WorkoutSes
     'SELECT * FROM workout_exercises WHERE workout_session_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
     [row.id],
   );
+  if (!exerciseRows.length) {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      routineId: row.routine_id,
+      title: row.title,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      status: row.status,
+      notes: row.notes,
+      exercises: [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      deletedAt: row.deleted_at,
+      syncStatus: row.sync_status,
+      version: row.version,
+    };
+  }
+
+  const exerciseIds = Array.from(new Set(exerciseRows.map((exerciseRow) => exerciseRow.exercise_id)));
+  const workoutExerciseIds = exerciseRows.map((exerciseRow) => exerciseRow.id);
+  const [exerciseEntities, setRows] = await Promise.all([
+    db.getAllAsync<ExerciseRow>(
+      `SELECT ${exerciseSelect('e')} FROM exercises e WHERE e.id IN (${sqlPlaceholders(exerciseIds.length)})`,
+      exerciseIds,
+    ),
+    db.getAllAsync<WorkoutSetRow>(
+      `SELECT * FROM workout_sets
+       WHERE workout_exercise_id IN (${sqlPlaceholders(workoutExerciseIds.length)}) AND deleted_at IS NULL
+       ORDER BY workout_exercise_id ASC, sort_order ASC`,
+      workoutExerciseIds,
+    ),
+  ]);
+
+  const exerciseById = new Map(exerciseEntities.map((exercise) => [exercise.id, exercise]));
+  const setRowsByWorkoutExerciseId = new Map<string, WorkoutSetRow[]>();
+  for (const setRow of setRows) {
+    const existing = setRowsByWorkoutExerciseId.get(setRow.workout_exercise_id) ?? [];
+    existing.push(setRow);
+    setRowsByWorkoutExerciseId.set(setRow.workout_exercise_id, existing);
+  }
+
   const exercises: WorkoutExercise[] = [];
   for (const exerciseRow of exerciseRows) {
-    const [exercise, setRows] = await Promise.all([
-      db.getFirstAsync<ExerciseRow>('SELECT * FROM exercises WHERE id = ?', [exerciseRow.exercise_id]),
-      db.getAllAsync<WorkoutSetRow>(
-        'SELECT * FROM workout_sets WHERE workout_exercise_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC',
-        [exerciseRow.id],
-      ),
-    ]);
+    const exercise = exerciseById.get(exerciseRow.exercise_id);
+    const workoutSetRows = setRowsByWorkoutExerciseId.get(exerciseRow.id) ?? [];
     exercises.push({
       id: exerciseRow.id,
       workoutSessionId: exerciseRow.workout_session_id,
@@ -1602,7 +2002,7 @@ async function hydrateWorkoutSession(row: WorkoutSessionRow): Promise<WorkoutSes
       sortOrder: exerciseRow.sort_order,
       supersetGroup: exerciseRow.superset_group,
       notes: exerciseRow.notes,
-      sets: setRows.map(mapWorkoutSet),
+      sets: workoutSetRows.map(mapWorkoutSet),
       createdAt: exerciseRow.created_at,
       updatedAt: exerciseRow.updated_at,
       deletedAt: exerciseRow.deleted_at,
@@ -1698,14 +2098,66 @@ function normalizeOptionalNonNegativeInteger(value: number | null | undefined, l
   return Math.round(value);
 }
 
+function uniqueDisplayValues(values: Array<string | null | undefined>): string[] {
+  const byKey = new Map<string, string>();
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (!byKey.has(key)) {
+      byKey.set(key, toDisplayValue(normalized));
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function toDisplayValue(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function splitAggregatedValues(value: string | null | undefined, fallback?: string | null): string[] {
+  const values = value?.split('||') ?? [];
+  if (fallback) {
+    values.unshift(fallback);
+  }
+  return uniqueDisplayValues(values);
+}
+
+function parseJsonStringArray(value: string | null | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function mapExercise(row: ExerciseRow): Exercise {
   return {
     id: row.id,
     userId: row.user_id,
+    source: row.source ?? (row.is_custom ? 'custom' : 'seed'),
+    sourceId: row.source_id,
+    category: row.category,
+    force: row.force,
+    mechanic: row.mechanic,
     name: row.name,
     primaryMuscle: row.primary_muscle,
+    primaryMuscles: splitAggregatedValues(row.primary_muscles, row.primary_muscle),
+    secondaryMuscles: splitAggregatedValues(row.secondary_muscles),
     equipment: row.equipment,
-    instructions: row.instructions,
+    equipmentOptions: splitAggregatedValues(row.equipment_options, row.equipment),
+    imagePaths: parseJsonStringArray(row.image_paths),
+    isFavorite: Boolean(row.is_favorite),
     isCustom: Boolean(row.is_custom),
   };
 }

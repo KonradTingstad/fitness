@@ -11,6 +11,9 @@ export type VolumeUnit = 'ml' | 'oz';
 export type EnergyUnit = 'kcal' | 'kj';
 export type MealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snacks';
 export type FoodItemType = 'food' | 'drink';
+export type FoodBaseUnit = 'g' | 'ml';
+export type NutritionBasis = 'per_100g' | 'per_100ml';
+export type ServingMode = 'fixed_package' | 'suggested_amount' | 'custom_amount';
 export type WorkoutStatus = 'active' | 'completed' | 'discarded';
 export type SetType =
   | 'warmup'
@@ -79,10 +82,19 @@ export interface GoalSettings extends AuditFields {
 export interface Exercise {
   id: ID;
   userId?: ID | null;
+  source?: string;
+  sourceId?: string | null;
+  category?: string | null;
+  force?: string | null;
+  mechanic?: string | null;
   name: string;
   primaryMuscle: string;
+  primaryMuscles?: string[];
+  secondaryMuscles?: string[];
   equipment: string;
-  instructions?: string | null;
+  equipmentOptions?: string[];
+  imagePaths?: string[];
+  isFavorite?: boolean;
   isCustom: boolean;
 }
 
@@ -183,10 +195,18 @@ export interface FoodItem {
   brandId?: ID | null;
   brandName?: string | null;
   itemType: FoodItemType;
+  productType?: FoodItemType | null;
+  baseUnit?: FoodBaseUnit | null;
+  nutritionBasis?: NutritionBasis | null;
+  servingMode?: ServingMode | null;
+  servingLabel?: string | null;
   name: string;
   servingSize: number;
   servingUnit: string;
   gramsPerServing: number;
+  packageSize?: number | null;
+  packageUnit?: FoodBaseUnit | null;
+  packageSizeLabel?: string | null;
   calories: number;
   proteinG: number;
   carbsG: number;
@@ -195,6 +215,8 @@ export interface FoodItem {
   sugarG?: number | null;
   saturatedFatG?: number | null;
   sodiumMg?: number | null;
+  caffeineMgPer100Ml?: number | null;
+  /** @deprecated Use `caffeineMgPer100Ml` instead. */
   caffeineMgPerCan?: number | null;
   kjPer100?: number | null;
   caloriesPer100?: number | null;

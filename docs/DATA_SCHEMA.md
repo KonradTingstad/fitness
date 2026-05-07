@@ -42,9 +42,9 @@ All syncable records use stable UUID text primary keys. Canonical units are stor
 ### exercises
 
 - Required: `id`, `name`, `primary_muscle`, `equipment`.
-- Optional: `instructions`, `is_custom`, `user_id`.
-- Indexes: `name`, `primary_muscle`, `user_id`.
-- Source of truth: seeded global rows plus local/remote user custom rows.
+- Optional: `user_id`, `source`, `source_id`, `category`, `force`, `mechanic`, `image_paths`, `is_custom`.
+- Indexes: `name`, `primary_muscle`, `user_id`, `source`, `source_id`, `category`; unique `(source, source_id)` when `source_id` is present.
+- Source of truth: seeded global rows plus generated `free-exercise-db` rows and local/remote user custom rows. Imported rows use stable local IDs and do not overwrite user-owned custom exercises.
 
 ### exercise_aliases
 
@@ -139,7 +139,7 @@ All syncable records use stable UUID text primary keys. Canonical units are stor
 ### food_items
 
 - Required: `id`, `name`, `serving_size`, `serving_unit`, `calories`, `protein_g`, `carbs_g`, `fat_g`.
-- Optional: `brand_id`, `brand_name`, `grams_per_serving`, `fiber_g`, `sugar_g`, `saturated_fat_g`, `sodium_mg`, `barcode`, `source_provider`, `is_verified`, `is_custom`, `user_id`, `variant`, `package_size`, `source_product_id`, `source_url`, `api_url`, `imported_at`, `private_snapshot`, `kj_per_100`, `calories_per_100`, `protein_per_100`, `carbs_per_100`, `sugar_per_100`, `fat_per_100`, `saturated_fat_per_100`, `fiber_per_100`, `salt_per_100`, `ingredients`, `allergens`, `raw_source_data`.
+- Optional: `brand_id`, `brand_name`, `product_type`, `base_unit`, `nutrition_basis`, `serving_mode`, `serving_label`, `grams_per_serving`, `fiber_g`, `sugar_g`, `saturated_fat_g`, `sodium_mg`, `caffeine_mg_per_100ml`, `caffeine_mg_per_can` (deprecated), `barcode`, `source_provider`, `is_verified`, `is_custom`, `user_id`, `variant`, `package_size` (raw label), `package_size_value`, `package_unit`, `source_product_id`, `source_url`, `api_url`, `imported_at`, `private_snapshot`, `kj_per_100`, `calories_per_100`, `protein_per_100`, `carbs_per_100`, `sugar_per_100`, `fat_per_100`, `saturated_fat_per_100`, `fiber_per_100`, `salt_per_100`, `ingredients`, `allergens`, `raw_source_data`.
 - Indexes: `name`, `brand_name`, `barcode`, `user_id`, `source_provider`, `source_product_id`.
 - Constraints: unique `(source_provider, source_product_id)` when `source_product_id` is present; unique `barcode` for `source_provider='oda_private_snapshot'` when barcode is present.
 - Source: provider cache, seeded foods, custom user foods.

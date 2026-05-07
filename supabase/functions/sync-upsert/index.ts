@@ -191,6 +191,8 @@ Deno.serve(async (req) => {
           updated_at: nowIso,
         };
 
+        if (hasValue(payload.goal)) row.goal = payload.goal;
+        if (hasValue(payload.activityLevel)) row.activity_level = payload.activityLevel;
         if (hasValue(payload.workoutsPerWeekTarget)) row.workouts_per_week_target = payload.workoutsPerWeekTarget;
         if (hasValue(payload.calorieTarget)) row.calorie_target = payload.calorieTarget;
         if (hasValue(payload.proteinTargetG)) row.protein_target_g = payload.proteinTargetG;
@@ -199,6 +201,43 @@ Deno.serve(async (req) => {
         if (hasValue(payload.waterTargetMl)) row.water_target_ml = payload.waterTargetMl;
 
         await upsertByUser('goal_settings', row);
+        break;
+      }
+
+      case 'user': {
+        if (operation === 'delete') {
+          await softDelete('users', userId);
+          break;
+        }
+
+        const row: Record<string, unknown> = {
+          id: userId,
+          updated_at: nowIso,
+        };
+        if (hasValue(payload.displayName)) row.display_name = payload.displayName;
+
+        await upsertById('users', row);
+        break;
+      }
+
+      case 'unit_preferences': {
+        if (operation === 'delete') {
+          const { error } = await supabase.from('unit_preferences').update({ deleted_at: nowIso }).eq('user_id', userId);
+          if (error) throw new Error(error.message);
+          break;
+        }
+
+        const row: Record<string, unknown> = {
+          user_id: userId,
+          updated_at: nowIso,
+        };
+        if (hasValue(payload.bodyWeightUnit)) row.body_weight_unit = payload.bodyWeightUnit;
+        if (hasValue(payload.loadUnit)) row.load_unit = payload.loadUnit;
+        if (hasValue(payload.distanceUnit)) row.distance_unit = payload.distanceUnit;
+        if (hasValue(payload.volumeUnit)) row.volume_unit = payload.volumeUnit;
+        if (hasValue(payload.energyUnit)) row.energy_unit = payload.energyUnit;
+
+        await upsertByUser('unit_preferences', row);
         break;
       }
 
@@ -426,6 +465,128 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case 'caffeine_log': {
+        if (operation === 'delete') {
+          await softDelete('caffeine_logs', entityId);
+          break;
+        }
+
+        await upsertById('caffeine_logs', {
+          id: entityId,
+          user_id: userId,
+          local_date: payload.localDate,
+          drink_name: payload.drinkName,
+          caffeine_mg: payload.caffeineMg,
+          amount_ml: (payload.amountMl as number | undefined) ?? null,
+          consumed_at: toIsoOrNull(payload.consumedAt) ?? nowIso,
+          updated_at: nowIso,
+        });
+        break;
+      }
+
+      case 'routine': {
+        if (operation === 'delete') {
+          await softDelete('routines', entityId);
+          break;
+        }
+
+        if (operation === 'insert' || operation === 'upsert') {
+          await upsertById('routines', {
+            id: entityId,
+            user_id: userId,
+            name: (payload.name as string | undefined) ?? 'Routine',
+            notes: (payload.notes as string | undefined) ?? null,
+            sort_order: (payload.sortOrder as number | undefined) ?? 0,
+            updated_at: nowIso,
+          });
+          break;
+        }
+
+        const patch: Record<string, unknown> = { updated_at: nowIso };
+        if (hasValue(payload.name)) patch.name = payload.name;
+        if (hasValue(payload.notes)) patch.notes = payload.notes;
+        if (hasValue(payload.sortOrder)) patch.sort_order = payload.sortOrder;
+        const { error } = await supabase.from('routines').update(patch).eq('id', entityId).eq('user_id', userId);
+        if (error) throw new Error(error.message);
+        break;
+      }
+
+      case 'routine_exercise': {
+        if (operation === 'delete') {
+          await softDelete('routine_exercises', entityId);
+          break;
+        }
+
+        await upsertById('routine_exercises', {
+          id: entityId,
+          routine_id: payload.routineId,
+          exercise_id: payload.exerciseId,
+          sort_order: payload.sortOrder,
+          superset_group: (payload.supersetGroup as string | undefined) ?? null,
+          notes: (payload.notes as string | undefined) ?? null,
+          default_rest_seconds: (payload.defaultRestSeconds as number | undefined) ?? 120,
+          updated_at: nowIso,
+        });
+        break;
+      }
+
+      case 'routine_set_template': {
+        if (operation === 'delete') {
+          await softDelete('routine_exercise_set_templates', entityId);
+          break;
+        }
+
+        await upsertById('routine_exercise_set_templates', {
+          id: entityId,
+          routine_exercise_id: payload.routineExerciseId,
+          sort_order: payload.sortOrder,
+          set_type: payload.setType,
+          target_reps_min: (payload.targetRepsMin as number | undefined) ?? null,
+          target_reps_max: (payload.targetRepsMax as number | undefined) ?? null,
+          target_weight_kg: (payload.targetWeightKg as number | undefined) ?? null,
+          duration_seconds: (payload.durationSeconds as number | undefined) ?? null,
+          distance_meters: (payload.distanceMeters as number | undefined) ?? null,
+          updated_at: nowIso,
+        });
+        break;
+      }
+
+      case 'program_day': {
+        if (operation === 'delete') {
+          await softDelete('workout_program_days', entityId);
+          break;
+        }
+
+        await upsertById('workout_program_days', {
+          id: entityId,
+          user_id: userId,
+          local_date: payload.localDate,
+          activity_type: payload.activityType,
+          title: payload.title,
+          routine_id: (payload.routineId as string | undefined) ?? null,
+          estimated_duration_minutes: (payload.estimatedDurationMinutes as number | undefined) ?? null,
+          metadata: (payload.metadata as string | undefined) ?? null,
+          updated_at: nowIso,
+        });
+        break;
+      }
+
+      case 'program_day_outcome': {
+        if (operation === 'delete') {
+          await softDelete('workout_program_day_outcomes', entityId);
+          break;
+        }
+
+        await upsertById('workout_program_day_outcomes', {
+          id: entityId,
+          user_id: userId,
+          local_date: payload.localDate,
+          status: payload.status,
+          updated_at: nowIso,
+        });
+        break;
+      }
+
       case 'food_item': {
         if (operation === 'delete') {
           await softDelete('food_items', entityId);
@@ -438,9 +599,17 @@ Deno.serve(async (req) => {
           name: payload.name,
           brand_name: (payload.brandName as string | undefined) ?? null,
           item_type: payload.itemType === 'drink' ? 'drink' : 'food',
+          product_type: payload.productType === 'drink' || payload.itemType === 'drink' ? 'drink' : 'food',
+          base_unit: (payload.baseUnit as string | undefined) ?? (payload.itemType === 'drink' ? 'ml' : 'g'),
+          nutrition_basis: (payload.nutritionBasis as string | undefined) ?? (payload.itemType === 'drink' ? 'per_100ml' : 'per_100g'),
+          serving_mode: (payload.servingMode as string | undefined) ?? null,
+          serving_label: (payload.servingLabel as string | undefined) ?? null,
           serving_size: payload.servingSize,
           serving_unit: payload.servingUnit,
           grams_per_serving: payload.gramsPerServing,
+          package_size: (payload.packageSizeLabel as string | undefined) ?? null,
+          package_size_value: (payload.packageSize as number | undefined) ?? null,
+          package_unit: (payload.packageUnit as string | undefined) ?? null,
           calories: payload.calories,
           protein_g: payload.proteinG,
           carbs_g: payload.carbsG,
@@ -449,6 +618,7 @@ Deno.serve(async (req) => {
           sugar_g: (payload.sugarG as number | undefined) ?? null,
           saturated_fat_g: (payload.saturatedFatG as number | undefined) ?? null,
           sodium_mg: (payload.sodiumMg as number | undefined) ?? null,
+          caffeine_mg_per_100ml: (payload.caffeineMgPer100Ml as number | undefined) ?? null,
           caffeine_mg_per_can: (payload.caffeineMgPerCan as number | undefined) ?? null,
           kj_per_100: (payload.kjPer100 as number | undefined) ?? null,
           calories_per_100: (payload.caloriesPer100 as number | undefined) ?? null,

@@ -1,6 +1,6 @@
 import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { addDays, addMonths, addYears, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import {
   Calendar,
@@ -26,8 +26,8 @@ import {
   Weight,
   X,
 } from 'lucide-react-native';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, LayoutAnimation, Modal, Pressable, ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, LayoutAnimation, Modal, Pressable, ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { AppText } from '@/components/AppText';
@@ -37,33 +37,53 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Screen } from '@/components/Screen';
 import { Exercise, Routine, WorkoutSession } from '@/domain/models';
+import {
+  EXERCISE_MUSCLE_CATEGORIES,
+  EXERCISE_TYPE_CATEGORIES,
+  ExerciseMuscleCategory,
+  ExerciseTypeCategory,
+  filterExerciseLibrary,
+  getExerciseMuscleCategory,
+  getExerciseMuscleFilterLabel,
+  getExerciseTypeCategory,
+  getExerciseTypeFilterLabel,
+} from '@/domain/calculations/exercises';
 import { calculateWorkoutVolume } from '@/domain/calculations/workout';
 import {
   discardWorkout,
   deleteRoutineTemplate,
+  listExercises,
   ProgramActivityType,
   ProgramDayOutcomeStatus,
   ProgramScheduleDay,
   listWorkoutSessionsForRange,
   SaveRoutineTemplateInput,
   saveRoutineTemplate,
+  setExerciseFavorite,
   startEmptyWorkout,
   startWorkoutFromRoutine,
   upsertProgramDayOutcome,
 } from '@/data/repositories/workoutRepository';
-import { useExercises, useProgramDayOutcomesForRange, useProgramScheduleForRange, useRecentWorkouts, useRoutines, useWorkoutSessionsForRange } from '@/hooks/useAppQueries';
+import {
+  useProgramDayOutcomesForRange,
+  useProgramScheduleForRange,
+  useRecentWorkouts,
+  useRoutines,
+  useWorkoutSessionsForRange,
+} from '@/hooks/useAppQueries';
 import { queryKeys } from '@/hooks/queryKeys';
 import { BottomTabParamList, RootStackParamList } from '@/navigation/types';
 import { CompletedWorkoutDetailsModal } from '@/features/workouts/components/history/CompletedWorkoutDetailsModal';
 import { useLiveWorkoutOverlayStore } from '@/features/workouts/stores/liveWorkoutOverlayStore';
 import { ProgramActivityIcon } from '@/features/workouts/components/ProgramActivityIcon';
 import { DateNavigator } from '@/components/DateNavigator';
+import { useWorkoutOverlayPadding } from '@/features/workouts/hooks/useWorkoutOverlayPadding';
+import { useFloatingTabBarClearance } from '@/navigation/tabBarMetrics';
 import { AppTheme, useAppTheme } from '@/theme/theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type WorkoutsRoute = RouteProp<BottomTabParamList, 'Workouts'>;
 type WorkoutTab = 'today' | 'program' | 'history' | 'exercises';
-type ExerciseFilter = 'All' | 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms';
 type ScheduleType = 'workout' | 'rest';
 type AdherenceStatus = 'done' | 'rest' | 'missed' | 'pending' | 'upcoming';
 type HistoryCalendarMode = 'month' | 'year' | 'multiYear';
@@ -77,7 +97,6 @@ const WORKOUT_TABS: Array<{ key: WorkoutTab; label: string }> = [
   { key: 'exercises', label: 'Exercises' },
 ];
 
-const EXERCISE_FILTERS: ExerciseFilter[] = ['All', 'Chest', 'Back', 'Legs', 'Shoulders', 'Arms'];
 const HISTORY_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const HISTORY_MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const HISTORY_CALENDAR_MODES: Array<{ key: HistoryCalendarMode; label: string }> = [
@@ -279,16 +298,6 @@ function buildHistoryShareMessage(workout: WorkoutSession): string {
   const meta = `Duration: ${formatWorkoutDuration(workout)} • Volume: ${volumeKg.toLocaleString()} kg • PRs: ${prCount}`;
   const body = rows.length ? `\n\nExercise / Best set\n${rows.join('\n')}` : '';
   return `${header}\n${meta}${body}`;
-}
-
-function mapExerciseCategory(primaryMuscle: string): ExerciseFilter {
-  const muscle = primaryMuscle.toLowerCase();
-  if (muscle.includes('chest')) return 'Chest';
-  if (muscle.includes('back') || muscle.includes('lat') || muscle.includes('posterior')) return 'Back';
-  if (muscle.includes('shoulder') || muscle.includes('deltoid')) return 'Shoulders';
-  if (muscle.includes('arm') || muscle.includes('bicep') || muscle.includes('tricep') || muscle.includes('forearm')) return 'Arms';
-  if (muscle.includes('quad') || muscle.includes('hamstring') || muscle.includes('glute') || muscle.includes('leg') || muscle.includes('calf')) return 'Legs';
-  return 'All';
 }
 
 function routinePreview(routine: Routine): string {
@@ -674,13 +683,17 @@ export function WorkoutDashboardScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<WorkoutsRoute>();
   const queryClient = useQueryClient();
+  const tabBarClearance = useFloatingTabBarClearance(8);
+  const exerciseListBottomPadding = useWorkoutOverlayPadding(28 + tabBarClearance);
   const openLiveWorkout = useLiveWorkoutOverlayStore((state) => state.open);
   const historyYearScrollRef = useRef<ScrollView>(null);
   const historyMultiYearScrollRef = useRef<ScrollView>(null);
   const handledHistoryReopenTokenRef = useRef<number | null>(null);
   const [tab, setTab] = useState<WorkoutTab>('today');
   const [searchQuery, setSearchQuery] = useState('');
-  const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>('All');
+  const [exerciseMuscleFilter, setExerciseMuscleFilter] = useState<ExerciseMuscleCategory>('All');
+  const [exerciseTypeFilter, setExerciseTypeFilter] = useState<ExerciseTypeCategory>('All');
+  const [exerciseFilterMenu, setExerciseFilterMenu] = useState<'muscle' | 'type' | null>(null);
   const [workoutGroups, setWorkoutGroups] = useState<WorkoutGroup[]>([]);
   const [groupsLoaded, setGroupsLoaded] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(() => new Set());
@@ -722,7 +735,12 @@ export function WorkoutDashboardScreen() {
   const nonStrengthOutcomes = useProgramDayOutcomesForRange(planRangeStart, planRangeEnd);
   const workoutSessions = useWorkoutSessionsForRange(planRangeStart, planRangeEnd);
   const historyCalendarSessions = useWorkoutSessionsForRange(historyCalendarRange.startLocalDate, historyCalendarRange.endLocalDate);
-  const exercises = useExercises();
+  const exercises = useQuery({
+    queryKey: queryKeys.exercises,
+    queryFn: () => listExercises(),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  });
   const routineList = routines.data ?? EMPTY_ROUTINES;
 
   useFocusEffect(
@@ -896,6 +914,63 @@ export function WorkoutDashboardScreen() {
     },
   });
 
+  const toggleExerciseFavorite = useMutation({
+    mutationFn: ({ exerciseId, isFavorite }: { exerciseId: string; isFavorite: boolean }) =>
+      setExerciseFavorite(exerciseId, isFavorite),
+    onMutate: async ({ exerciseId, isFavorite }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.exercises });
+      const previousExercises = queryClient.getQueryData<Exercise[]>(queryKeys.exercises);
+      queryClient.setQueryData<Exercise[]>(queryKeys.exercises, (current) =>
+        current?.map((exercise) => (exercise.id === exerciseId ? { ...exercise, isFavorite } : exercise)) ?? current,
+      );
+      return { previousExercises };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previousExercises) {
+        queryClient.setQueryData(queryKeys.exercises, context.previousExercises);
+      }
+      Alert.alert('Favorites', error instanceof Error ? error.message : 'Unable to update favorite right now.');
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.exerciseHistory(variables.exerciseId) });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.exercises });
+    },
+  });
+
+  const recentList = recent.data ?? [];
+  const exerciseList = exercises.data ?? [];
+  const exerciseStats = useMemo(() => buildExerciseStats(recentList), [recentList]);
+  const filteredExercises = useMemo(
+    () =>
+      filterExerciseLibrary(exerciseList, {
+        query: searchQuery,
+        muscleCategory: exerciseMuscleFilter,
+        typeCategory: exerciseTypeFilter,
+      }),
+    [exerciseList, exerciseMuscleFilter, exerciseTypeFilter, searchQuery],
+  );
+
+  const renderExerciseItem = useCallback(
+    ({ item }: { item: Exercise }) => (
+      <ExerciseLibraryRow
+        exercise={item}
+        stats={exerciseStats.get(item.id)}
+        theme={theme}
+        onPress={() => navigation.navigate('ExerciseHistory', { exerciseId: item.id })}
+        onToggleFavorite={() =>
+          toggleExerciseFavorite.mutate({
+            exerciseId: item.id,
+            isFavorite: !Boolean(item.isFavorite),
+          })
+        }
+        favoritePending={toggleExerciseFavorite.isPending && toggleExerciseFavorite.variables?.exerciseId === item.id}
+      />
+    ),
+    [exerciseStats, navigation, theme, toggleExerciseFavorite],
+  );
+
   if (
     routines.isLoading
     || recent.isLoading
@@ -909,10 +984,8 @@ export function WorkoutDashboardScreen() {
     return <LoadingState label="Loading workouts" />;
   }
 
-  const recentList = recent.data ?? [];
   const sessionRange = workoutSessions.data ?? [];
   const historyCalendarSessionRange = historyCalendarSessions.data ?? [];
-  const exerciseList = exercises.data ?? [];
   const thisWeekScheduleDays = thisWeekProgramSchedule.data ?? [];
   const streakScheduleDays = streakProgramSchedule.data ?? [];
   const weekScheduleDays = programSchedule.data ?? [];
@@ -942,20 +1015,12 @@ export function WorkoutDashboardScreen() {
   );
   const weekVolume = completedSetsThisWeek.reduce((sum, set) => sum + (set.weightKg ?? 0) * (set.reps ?? 0), 0);
 
-  const exerciseStats = buildExerciseStats(recentList);
-
-  const filteredExercises = exerciseList.filter((exercise) => {
-    const category = mapExerciseCategory(exercise.primaryMuscle);
-    const matchesCategory = exerciseFilter === 'All' || category === exerciseFilter;
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch = !q || exercise.name.toLowerCase().includes(q) || exercise.primaryMuscle.toLowerCase().includes(q);
-    return matchesCategory && matchesSearch;
-  });
   const programGroups = groupsLoaded ? workoutGroups : buildDefaultGroups(routineList);
   const routinesById = new Map(routineList.map((routine) => [routine.id, routine]));
   const activeHistoryActionWorkout = historyActionSessionId
     ? recentList.find((workout) => workout.id === historyActionSessionId) ?? null
     : null;
+  const isExerciseTab = tab === 'exercises';
 
   const renderTabs = () => (
     <View style={styles.tabShell}>
@@ -1294,7 +1359,7 @@ export function WorkoutDashboardScreen() {
 
     const fullWeek = weekProgramDays.map((day) => ({
       day,
-      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], selectedDate, nonStrengthOutcomesByDate.get(day.localDate)),
+      adherence: getAdherence(day, groupedSessions.get(day.localDate) ?? [], todayKey, nonStrengthOutcomesByDate.get(day.localDate)),
     }));
     const streakVisualDays = streakVisualProgramDays.map((day) => ({
       day,
@@ -2114,8 +2179,8 @@ export function WorkoutDashboardScreen() {
     </>
   );
 
-  const renderExercisesTab = () => (
-    <>
+  const renderExerciseListHeader = () => (
+    <View style={styles.exerciseListHeader}>
       <View style={styles.searchRow}>
         <View style={[styles.searchInputWrap, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
           <Search size={20} color={theme.colors.muted} />
@@ -2128,7 +2193,11 @@ export function WorkoutDashboardScreen() {
           />
         </View>
         <Pressable
-          onPress={() => Alert.alert('Filters', 'Advanced filters can be added here.')}
+          onPress={() => {
+            setSearchQuery('');
+            setExerciseMuscleFilter('All');
+            setExerciseTypeFilter('All');
+          }}
           style={({ pressed }) => [
             styles.filterButton,
             { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.84 : 1 },
@@ -2138,28 +2207,22 @@ export function WorkoutDashboardScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.chipsRow}>
-        {EXERCISE_FILTERS.map((chip) => {
-          const activeChip = chip === exerciseFilter;
-          return (
-            <Pressable
-              key={chip}
-              onPress={() => setExerciseFilter(chip)}
-              style={({ pressed }) => [
-                styles.chip,
-                {
-                  borderColor: activeChip ? theme.colors.primary : theme.colors.border,
-                  backgroundColor: activeChip ? theme.colors.surfaceAlt : 'transparent',
-                  opacity: pressed ? 0.84 : 1,
-                },
-              ]}
-            >
-              <AppText weight={activeChip ? '800' : '600'} style={{ color: activeChip ? theme.colors.primary : theme.colors.muted }}>
-                {chip}
-              </AppText>
-            </Pressable>
-          );
-        })}
+      <View style={styles.exerciseFilterBar}>
+        <FilterButton
+          label={getExerciseMuscleFilterLabel(exerciseMuscleFilter)}
+          active={exerciseMuscleFilter !== 'All'}
+          onPress={() => setExerciseFilterMenu('muscle')}
+        />
+        <FilterButton
+          label={getExerciseTypeFilterLabel(exerciseTypeFilter)}
+          active={exerciseTypeFilter !== 'All'}
+          onPress={() => setExerciseFilterMenu('type')}
+        />
+        <View style={[styles.sortPill, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+          <AppText variant="small" weight="700" style={{ color: theme.colors.muted }}>
+            A-Z
+          </AppText>
+        </View>
       </View>
 
       <View style={styles.spaceBetween}>
@@ -2170,62 +2233,47 @@ export function WorkoutDashboardScreen() {
           </AppText>
         </Pressable>
       </View>
+    </View>
+  );
 
-      {filteredExercises.length ? (
-        filteredExercises.map((exercise) => {
-          const stats = exerciseStats.get(exercise.id);
-          const category = mapExerciseCategory(exercise.primaryMuscle);
-          const type = exercise.equipment.toLowerCase() === 'bodyweight' ? 'Bodyweight' : 'Compound';
-          const prLabel = stats?.prWeightKg != null ? `${Math.round(stats.prWeightKg)} kg` : '--';
-          const latestLabel =
-            stats?.latestWeightKg != null
-              ? `Last ${Math.round(stats.latestWeightKg)} kg x ${stats.latestReps ?? '-'}`
-              : stats?.latestReps != null
-                ? `Last ${stats.latestReps} reps`
-                : 'Last --';
-          return (
-            <Card key={exercise.id} onPress={() => navigation.navigate('ExerciseHistory', { exerciseId: exercise.id })} style={styles.listCard}>
-              <View style={styles.exerciseRow}>
-                <View style={[styles.exerciseIcon, { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border }]}>
-                  <Dumbbell size={22} color={theme.colors.primary} />
-                </View>
-                <View style={styles.exerciseMain}>
-                  <AppText weight="800" style={styles.savedTitle}>
-                    {exercise.name}
-                  </AppText>
-                  <AppText muted>
-                    {category} • {type}
-                  </AppText>
-                  <AppText muted>{exercise.equipment}</AppText>
-                </View>
-                <View style={styles.exerciseStats}>
-                  <AppText muted>
-                    PR <AppText weight="800" style={{ color: theme.colors.primary }}>{prLabel}</AppText>
-                  </AppText>
-                  <AppText muted>{latestLabel}</AppText>
-                  <AppText muted>{stats?.latestDate ?? '--'}</AppText>
-                </View>
-                <View style={styles.exerciseActions}>
-                  <Star size={20} color={theme.colors.primary} />
-                  <ChevronRight size={22} color={theme.colors.muted} />
-                </View>
-              </View>
-            </Card>
-          );
-        })
-      ) : (
-        <EmptyState icon={Search} title="No exercises found" body="Adjust search or category filters." />
-      )}
-
-      <AppText muted style={styles.exerciseCount}>
-        {filteredExercises.length} exercises
-      </AppText>
-    </>
+  const renderExercisesTab = () => (
+    <View style={styles.exerciseTabContent}>
+      {renderExerciseListHeader()}
+      <FlatList
+        data={filteredExercises}
+        keyExtractor={(item) => item.id}
+        renderItem={renderExerciseItem}
+        ListEmptyComponent={
+          <EmptyState
+            icon={Search}
+            title={exercises.error ? 'Unable to load exercises' : 'No exercises found'}
+            body={
+              exercises.error
+                ? 'Please restart the app once to refresh your local exercise library.'
+                : 'Adjust search or category filters.'
+            }
+          />
+        }
+        ListFooterComponent={
+          <AppText muted style={styles.exerciseCount}>
+            {filteredExercises.length} exercises
+          </AppText>
+        }
+        style={styles.exerciseList}
+        contentContainerStyle={[styles.exerciseListContent, { paddingBottom: exerciseListBottomPadding }]}
+        keyboardShouldPersistTaps="always"
+        keyboardDismissMode="none"
+        initialNumToRender={14}
+        maxToRenderPerBatch={14}
+        windowSize={7}
+        removeClippedSubviews
+      />
+    </View>
   );
 
   return (
     <>
-      <Screen resetScrollOnBlur>
+      <Screen resetScrollOnBlur scroll={!isExerciseTab} padded={!isExerciseTab} style={isExerciseTab ? styles.exerciseScreenContent : undefined}>
         <View style={styles.header}>
           <View>
             <AppText variant="title">Workouts</AppText>
@@ -2242,6 +2290,30 @@ export function WorkoutDashboardScreen() {
         {tab === 'history' ? renderHistoryTab() : null}
         {tab === 'exercises' ? renderExercisesTab() : null}
       </Screen>
+
+      <ExerciseFilterMenu
+        visible={exerciseFilterMenu === 'muscle'}
+        title="Muscle"
+        options={EXERCISE_MUSCLE_CATEGORIES}
+        selected={exerciseMuscleFilter}
+        onSelect={(option) => {
+          setExerciseMuscleFilter(option as ExerciseMuscleCategory);
+          setExerciseFilterMenu(null);
+        }}
+        onClose={() => setExerciseFilterMenu(null)}
+      />
+
+      <ExerciseFilterMenu
+        visible={exerciseFilterMenu === 'type'}
+        title="Type"
+        options={EXERCISE_TYPE_CATEGORIES}
+        selected={exerciseTypeFilter}
+        onSelect={(option) => {
+          setExerciseTypeFilter(option as ExerciseTypeCategory);
+          setExerciseFilterMenu(null);
+        }}
+        onClose={() => setExerciseFilterMenu(null)}
+      />
 
       <CompletedWorkoutDetailsModal
         visible={Boolean(historyDetailsSessionId)}
@@ -2296,6 +2368,159 @@ export function WorkoutDashboardScreen() {
     </>
   );
 }
+
+function FilterButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const theme = useAppTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.filterSelectButton,
+        {
+          borderColor: active ? theme.colors.primary : theme.colors.border,
+          backgroundColor: active ? 'rgba(53,199,122,0.14)' : theme.colors.surface,
+          opacity: pressed ? 0.82 : 1,
+        },
+      ]}
+    >
+      <AppText variant="small" weight="800" numberOfLines={1} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
+        {label}
+      </AppText>
+      <ChevronDown size={14} color={active ? theme.colors.primary : theme.colors.muted} />
+    </Pressable>
+  );
+}
+
+function ExerciseFilterMenu({
+  visible,
+  title,
+  options,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  options: readonly string[];
+  selected: string;
+  onSelect: (option: string) => void;
+  onClose: () => void;
+}) {
+  const theme = useAppTheme();
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.filterOverlay}>
+        <Pressable style={styles.modalBackdrop} onPress={onClose} />
+        <View style={[styles.exerciseFilterSheet, { borderColor: theme.colors.border, backgroundColor: 'rgba(15,21,28,0.99)' }]}>
+          <View style={styles.filterSheetHeader}>
+            <AppText variant="section">{title}</AppText>
+            <Pressable onPress={onClose} style={({ pressed }) => [styles.filterCloseButton, { borderColor: theme.colors.border, opacity: pressed ? 0.82 : 1 }]}>
+              <X size={16} color={theme.colors.text} />
+            </Pressable>
+          </View>
+          <View style={styles.filterOptionGrid}>
+            {options.map((option) => {
+              const active = selected === option;
+              return (
+                <Pressable
+                  key={option}
+                  onPress={() => onSelect(option)}
+                  style={({ pressed }) => [
+                    styles.exerciseFilterOption,
+                    {
+                      borderColor: active ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: active ? 'rgba(53,199,122,0.16)' : theme.colors.surfaceAlt,
+                      opacity: pressed ? 0.82 : 1,
+                    },
+                  ]}
+                >
+                  <AppText weight={active ? '800' : '700'} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
+                    {option}
+                  </AppText>
+                  {active ? <Check size={16} color={theme.colors.primary} /> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const ExerciseLibraryRow = memo(function ExerciseLibraryRow({
+  exercise,
+  stats,
+  theme,
+  onPress,
+  onToggleFavorite,
+  favoritePending,
+}: {
+  exercise: Exercise;
+  stats?: ExerciseStats;
+  theme: AppTheme;
+  onPress: () => void;
+  onToggleFavorite: () => void;
+  favoritePending: boolean;
+}) {
+  const primaryMuscle = getExerciseMuscleCategory(exercise);
+  const type = getExerciseTypeCategory(exercise);
+  const prLabel = stats?.prWeightKg != null ? `${Math.round(stats.prWeightKg)} kg` : '--';
+  const latestLabel =
+    stats?.latestWeightKg != null
+      ? `Last ${Math.round(stats.latestWeightKg)} kg x ${stats.latestReps ?? '-'}`
+      : stats?.latestReps != null
+        ? `Last ${stats.latestReps} reps`
+        : 'Last --';
+
+  return (
+    <Card onPress={onPress} style={styles.listCard}>
+      <View style={styles.exerciseRow}>
+        <View style={[styles.exerciseIcon, { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border }]}>
+          <Dumbbell size={22} color={theme.colors.primary} />
+        </View>
+        <View style={styles.exerciseMain}>
+          <AppText weight="800" style={styles.savedTitle}>
+            {exercise.name}
+          </AppText>
+          <AppText muted>
+            {primaryMuscle} • {type}
+          </AppText>
+          <AppText muted>{exercise.source === 'free-exercise-db' ? 'Library' : exercise.source ?? 'Library'}</AppText>
+        </View>
+        <View style={styles.exerciseStats}>
+          <AppText muted>
+            PR <AppText weight="800" style={{ color: theme.colors.primary }}>{prLabel}</AppText>
+          </AppText>
+          <AppText muted>{latestLabel}</AppText>
+          <AppText muted>{stats?.latestDate ?? '--'}</AppText>
+        </View>
+        <View style={styles.exerciseActions}>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              onToggleFavorite();
+            }}
+            disabled={favoritePending}
+            hitSlop={8}
+            style={({ pressed }) => [{ opacity: favoritePending ? 0.45 : pressed ? 0.72 : 1 }]}
+          >
+            <Star
+              size={20}
+              color={theme.colors.primary}
+              fill={exercise.isFavorite ? theme.colors.primary : 'transparent'}
+            />
+          </Pressable>
+          <ChevronRight size={22} color={theme.colors.muted} />
+        </View>
+      </View>
+    </Card>
+  );
+});
 
 function HistoryActionItem({
   icon: Icon,
@@ -2964,6 +3189,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 30,
   },
+  exerciseScreenContent: {
+    flex: 1,
+    paddingBottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  exerciseTabContent: {
+    flex: 1,
+    gap: 12,
+  },
+  exerciseListContent: {
+    gap: 12,
+  },
+  exerciseList: {
+    flex: 1,
+  },
+  exerciseListHeader: {
+    gap: 12,
+  },
   searchRow: {
     flexDirection: 'row',
     gap: 8,
@@ -2991,17 +3235,71 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 48,
   },
-  chipsRow: {
+  exerciseFilterBar: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
   },
-  chip: {
-    borderRadius: 14,
-    borderWidth: 1,
+  filterSelectButton: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'space-between',
     minHeight: 36,
+    minWidth: 0,
+    paddingHorizontal: 10,
+  },
+  sortPill: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    minHeight: 36,
+    width: 50,
+  },
+  filterOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(4,7,11,0.58)',
+  },
+  exerciseFilterSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 14,
+    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  filterSheetHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  filterCloseButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  filterOptionGrid: {
+    gap: 8,
+  },
+  exerciseFilterOption: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingHorizontal: 12,
   },
   exerciseRow: {
     alignItems: 'center',

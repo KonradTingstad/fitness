@@ -122,6 +122,11 @@ export async function completeOnboarding(input: OnboardingForm, userId = DEMO_US
     [input.calorieTarget, input.proteinTargetG, input.workoutsPerWeekTarget, now, userId],
   );
   await enqueueSync('user_profile', userId, 'update', input);
+  await enqueueSync('goal_settings', userId, 'update', {
+    calorieTarget: input.calorieTarget,
+    proteinTargetG: input.proteinTargetG,
+    workoutsPerWeekTarget: input.workoutsPerWeekTarget,
+  });
 }
 
 export async function updateGoals(

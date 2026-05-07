@@ -241,7 +241,7 @@ export function CreateMealScreen() {
   const diary = useDiary(sourceDate ?? toLocalDateKey());
   const nutritionLibrary = useNutritionLibrary();
   const foodCatalog = useFoodSearch('', 'all');
-  const searchedFoods = useFoodSearch(query, 'food');
+  const searchedFoods = useFoodSearch(query, 'food', { enabled: query.trim().length > 0 });
   const recentFoods = useRecentFoods('food');
 
   const foodsById = useMemo(() => {

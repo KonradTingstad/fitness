@@ -235,6 +235,7 @@ describe('oda importer helpers', () => {
       saturated_fat_per_100: 1.2,
       fiber_per_100: null,
       salt_per_100: 0.1,
+      caffeine_mg_per_100ml: 32,
       caffeine_mg_per_can: 160,
       ingredients: 'milk',
       allergens: 'milk',
@@ -253,7 +254,9 @@ describe('oda importer helpers', () => {
       fat_g: 1.8,
       salt_per_100: 0.1,
       sodium_mg: 40,
+      caffeine_mg_per_100ml: 32,
       caffeine_mg_per_can: 160,
+      serving_unit: 'g',
     });
   });
 

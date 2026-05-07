@@ -52,7 +52,7 @@ export const customFoodSchema = z.object({
   sugarG: optionalNumberField('Sugar'),
   saturatedFatG: optionalNumberField('Saturated fat'),
   sodiumMg: optionalNumberField('Sodium'),
-  caffeineMgPerCan: optionalNumberField('Caffeine (mg per can)'),
+  caffeineMgPer100Ml: optionalNumberField('Caffeine (mg per 100 ml)'),
   barcode: z
     .string()
     .trim()

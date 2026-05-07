@@ -1,9 +1,20 @@
 import { X, Plus, Check } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, SectionList, StyleSheet, TextInput, View, ViewToken } from 'react-native';
+import { Modal, Pressable, ScrollView, SectionList, StyleSheet, TextInput, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
+import {
+  EXERCISE_MUSCLE_CATEGORIES,
+  EXERCISE_TYPE_CATEGORIES,
+  ExerciseMuscleCategory,
+  ExerciseTypeCategory,
+  filterExerciseLibrary,
+  getExerciseMuscleCategory,
+  getExerciseMuscleFilterLabel,
+  getExerciseTypeCategory,
+  getExerciseTypeFilterLabel,
+} from '@/domain/calculations/exercises';
 import { Exercise } from '@/domain/models';
 import { useAppTheme } from '@/theme/theme';
 
@@ -23,7 +34,7 @@ interface ExerciseSection {
   data: Exercise[];
 }
 
-type FilterMenu = 'bodyPart' | 'category' | null;
+type FilterMenu = 'muscle' | 'type' | null;
 
 export function ExercisePickerSheet({
   visible,
@@ -39,8 +50,8 @@ export function ExercisePickerSheet({
   const insets = useSafeAreaInsets();
   const sectionListRef = useRef<SectionList<Exercise, ExerciseSection>>(null);
   const [query, setQuery] = useState('');
-  const [bodyPart, setBodyPart] = useState('Any Body Part');
-  const [category, setCategory] = useState('Any Category');
+  const [muscleCategory, setMuscleCategory] = useState<ExerciseMuscleCategory>('All');
+  const [typeCategory, setTypeCategory] = useState<ExerciseTypeCategory>('All');
   const [sortDirection] = useState<'asc'>('asc');
   const [filterMenu, setFilterMenu] = useState<FilterMenu>(null);
   const [activeLetter, setActiveLetter] = useState<string | null>(null);
@@ -52,40 +63,10 @@ export function ExercisePickerSheet({
   const railInteractingRef = useRef(false);
   const sectionIndexByLetterRef = useRef<Map<string, number>>(new Map());
 
-  const bodyPartOptions = useMemo(() => {
-    const values = new Set<string>();
-    for (const exercise of exercises) {
-      if (exercise.primaryMuscle.trim()) {
-        values.add(toTitleCase(exercise.primaryMuscle.trim()));
-      }
-    }
-    return ['Any Body Part', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
-  }, [exercises]);
-
-  const categoryOptions = useMemo(() => {
-    const values = new Set<string>();
-    for (const exercise of exercises) {
-      if (exercise.equipment.trim()) {
-        values.add(toTitleCase(exercise.equipment.trim()));
-      }
-    }
-    return ['Any Category', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
-  }, [exercises]);
-
   const filteredExercises = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    return exercises
-      .filter((exercise) => {
-        const name = exercise.name.toLocaleLowerCase();
-        const muscle = exercise.primaryMuscle.toLocaleLowerCase();
-        const equipment = exercise.equipment.toLocaleLowerCase();
-        const matchesQuery = !normalizedQuery || name.includes(normalizedQuery) || muscle.includes(normalizedQuery) || equipment.includes(normalizedQuery);
-        const matchesBodyPart = bodyPart === 'Any Body Part' || toTitleCase(exercise.primaryMuscle) === bodyPart;
-        const matchesCategory = category === 'Any Category' || toTitleCase(exercise.equipment) === category;
-        return matchesQuery && matchesBodyPart && matchesCategory;
-      })
+    return filterExerciseLibrary(exercises, { query, muscleCategory, typeCategory })
       .sort((a, b) => (sortDirection === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)));
-  }, [bodyPart, category, exercises, query, sortDirection]);
+  }, [exercises, muscleCategory, query, sortDirection, typeCategory]);
 
   const sections = useMemo<ExerciseSection[]>(() => {
     const grouped = new Map<string, Exercise[]>();
@@ -268,8 +249,8 @@ export function ExercisePickerSheet({
         </View>
 
         <View style={styles.pillRow}>
-          <FilterPill label={bodyPart} onPress={() => setFilterMenu('bodyPart')} />
-          <FilterPill label={category} onPress={() => setFilterMenu('category')} />
+          <FilterPill label={getExerciseMuscleFilterLabel(muscleCategory)} active={muscleCategory !== 'All'} onPress={() => setFilterMenu('muscle')} />
+          <FilterPill label={getExerciseTypeFilterLabel(typeCategory)} active={typeCategory !== 'All'} onPress={() => setFilterMenu('type')} />
           <FilterPill label="Sort: A → Z" onPress={() => undefined} />
         </View>
 
@@ -280,6 +261,10 @@ export function ExercisePickerSheet({
             keyExtractor={(item) => item.id}
             stickySectionHeadersEnabled
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={18}
+            maxToRenderPerBatch={18}
+            windowSize={8}
+            removeClippedSubviews
             onScrollToIndexFailed={() => {
               const pending = pendingScrollTargetRef.current;
               if (!pending) {
@@ -314,7 +299,7 @@ export function ExercisePickerSheet({
                   <View style={styles.rowCopy}>
                     <AppText weight="700">{item.name}</AppText>
                     <AppText muted variant="small">
-                      {toTitleCase(item.primaryMuscle)} • {toTitleCase(item.equipment)}
+                      {getExerciseMuscleCategory(item)} • {getExerciseTypeCategory(item)}
                     </AppText>
                     {previous ? (
                       <AppText variant="small" style={{ color: theme.colors.primary }}>
@@ -412,34 +397,45 @@ export function ExercisePickerSheet({
           <View style={styles.filterMenuLayer} pointerEvents="box-none">
             <Pressable style={styles.backdrop} onPress={() => setFilterMenu(null)} />
             <View style={[styles.filterMenu, { borderColor: theme.colors.border, backgroundColor: 'rgba(22,27,34,0.98)' }]}>
-              {(filterMenu === 'bodyPart' ? bodyPartOptions : categoryOptions).map((option) => {
-                const active = filterMenu === 'bodyPart' ? option === bodyPart : option === category;
-                return (
-                  <Pressable
-                    key={option}
-                    onPress={() => {
-                      if (filterMenu === 'bodyPart') {
-                        setBodyPart(option);
-                      } else {
-                        setCategory(option);
-                      }
-                      setFilterMenu(null);
-                    }}
-                    style={({ pressed }) => [
-                      styles.filterOption,
-                      {
-                        borderColor: active ? theme.colors.primary : theme.colors.border,
-                        backgroundColor: active ? 'rgba(53,199,122,0.16)' : theme.colors.surfaceAlt,
-                        opacity: pressed ? 0.82 : 1,
-                      },
-                    ]}
-                  >
-                    <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
-                      {option}
-                    </AppText>
-                  </Pressable>
-                );
-              })}
+              <View style={styles.filterMenuHeader}>
+                <AppText variant="section">{filterMenu === 'muscle' ? 'Muscle' : 'Type'}</AppText>
+                <Pressable
+                  onPress={() => setFilterMenu(null)}
+                  style={({ pressed }) => [styles.filterCloseButton, { borderColor: theme.colors.border, opacity: pressed ? 0.82 : 1 }]}
+                >
+                  <X size={16} color={theme.colors.text} />
+                </Pressable>
+              </View>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.filterMenuContent}>
+                {(filterMenu === 'muscle' ? EXERCISE_MUSCLE_CATEGORIES : EXERCISE_TYPE_CATEGORIES).map((option) => {
+                  const active = filterMenu === 'muscle' ? option === muscleCategory : option === typeCategory;
+                  return (
+                    <Pressable
+                      key={option}
+                      onPress={() => {
+                        if (filterMenu === 'muscle') {
+                          setMuscleCategory(option as ExerciseMuscleCategory);
+                        } else {
+                          setTypeCategory(option as ExerciseTypeCategory);
+                        }
+                        setFilterMenu(null);
+                      }}
+                      style={({ pressed }) => [
+                        styles.filterOption,
+                        {
+                          borderColor: active ? theme.colors.primary : theme.colors.border,
+                          backgroundColor: active ? 'rgba(53,199,122,0.16)' : theme.colors.surfaceAlt,
+                          opacity: pressed ? 0.82 : 1,
+                        },
+                      ]}
+                    >
+                      <AppText weight={active ? '800' : '600'} style={{ color: active ? theme.colors.primary : theme.colors.text }}>
+                        {option}
+                      </AppText>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
           </View>
         ) : null}
@@ -448,29 +444,25 @@ export function ExercisePickerSheet({
   );
 }
 
-function FilterPill({ label, onPress }: { label: string; onPress: () => void }) {
+function FilterPill({ label, onPress, active = false }: { label: string; onPress: () => void; active?: boolean }) {
   const theme = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.pill,
-        { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.82 : 1 },
+        {
+          borderColor: active ? theme.colors.primary : theme.colors.border,
+          backgroundColor: active ? 'rgba(53,199,122,0.14)' : theme.colors.surfaceAlt,
+          opacity: pressed ? 0.82 : 1,
+        },
       ]}
     >
-      <AppText variant="small" numberOfLines={1} style={{ color: theme.colors.muted }}>
+      <AppText variant="small" weight="700" numberOfLines={1} style={{ color: active ? theme.colors.primary : theme.colors.muted }}>
         {label}
       </AppText>
     </Pressable>
   );
-}
-
-function toTitleCase(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
 }
 
 const styles = StyleSheet.create({
@@ -632,10 +624,26 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    gap: 8,
+    gap: 12,
     maxHeight: '45%',
     paddingHorizontal: 14,
     paddingVertical: 14,
+  },
+  filterMenuHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  filterCloseButton: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  filterMenuContent: {
+    gap: 8,
   },
   filterOption: {
     borderRadius: 10,

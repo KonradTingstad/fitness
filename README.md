@@ -1,6 +1,6 @@
 # FormFuel (Fitness App)
 
-Sist oppdatert: 2026-04-30
+Sist oppdatert: 2026-05-07
 
 ## Viktig vedlikeholdsregel
 
@@ -98,7 +98,7 @@ Ved appstart (`App.tsx`) skjer dette:
 - `Today`: dagens planlagte okt/forslag, rest day-state, ukesstatus, streak og progress overview
 - `Program`: ukesplan + grupperte templates i 2-kolonne grid + full `Edit program` editor
 - `History`: ukesoppsummering, kalender og fullforte okter med sammendrag
-- `Exercises`: sok/filter, PR/last set-data, inngang til historikk
+- `Exercises`: raskt lokalt sok, ryddige filtermenyer for app-mappede muskel-/typekategorier, stor offline styrkeovelsesdatabase, PR/last set-data og inngang til historikk
 - Workouts-header og toppfaner bruker na samme dimensjoner/hoyde-oppsett som Nutrition for jevnere overgang mellom sidene.
 - Dato-navigasjonen i `Today` lar na brukeren trykke pa datolabelen for a apne en nedtrekks manedskalender med pilnavigasjon mellom maneder og tydelig markering av dagens dato.
 - Nar brukeren gar bort fra `Workouts`-fanen og tilbake, resettes datoen automatisk til dagens dato.
@@ -409,6 +409,7 @@ open ios/FormFuel.xcodeproj
 - `npm run android` - bygg/kjor Android
 - `npm run web` - web preview
 - `npm run prebuild:ios` - generer iOS native prosjekt
+- `npm run import:exercises` - generer lokal styrkeovelse-seed fra `free-exercise-db`
 - `npm run import:oda-foods` - manuell Oda private snapshot-import til Supabase
 - `npm run typecheck` - TypeScript noEmit
 - `npm run test` - Jest tester
@@ -421,6 +422,8 @@ Tester finnes i:
 
 - `__tests__/workout.test.ts`
 - `__tests__/nutrition.test.ts`
+- `__tests__/exercise-filters.test.ts`
+- `__tests__/exercise-import.test.ts`
 - `__tests__/oda-importer.test.ts`
 
 Disse dekker blant annet:
@@ -428,6 +431,8 @@ Disse dekker blant annet:
 - volumkalkulasjon
 - estimert 1RM
 - PR-detektering
+- mapping av ra exercise-muskel/utstyr til appens ryddige filterkategorier
+- free-exercise-db seed-import, kilde-ID-er og duplikatvern
 - summering av nutrition totals
 - adherence/remaining macros
 - Oda sitemap/API parsing, nutrition-normalisering og upsert-payload for importer
@@ -449,6 +454,9 @@ Ekstra ideer finnes i: `To be added.md`.
 
 ## Endringslogg
 
+- 2026-05-07: Fjernet `instructions` og `level` fra exercise seed/import og UI, og nullstiller legacy-verdier for ikke-custom seedede ovelser ved database-init.
+- 2026-05-07: Ryddet Workouts Exercise library og Exercise picker med faste muskel-/typefiltermenyer, lokal in-memory filtrering fra cached exercise-liste og FlatList-basert exercise library for a unnga loading-blink ved typing.
+- 2026-05-07: La til offline styrkeovelsesdatabase fra `yuhonas/free-exercise-db` via generert lokal seed, idempotente exercise-metadatafelt, repository-sok/filter og oppdatert exercise picker/Exercises-fane med muskelgruppe- og utstyrsfilter.
 - 2026-04-30: Forenklet nederste tab-bar til ren liquid-glass uten stripete/veil-bakgrunn ved a fjerne ekstra gradient-lag og beholde blur + jevn tint + subtil inner glow.
 - 2026-04-29: Fjernet sirkelformede specular-highlight lag i nederste tab-bar for a rydde bort visuell stoy i bunnen, samtidig som liquid-glass stilen beholdes.
 - 2026-04-29: Oppgraderte nederste tab-bar til liquid-glass uttrykk (forbedret frosted blur, rim-lys og specular highlights) uten a endre eksisterende størrelse, bredde eller plassering.

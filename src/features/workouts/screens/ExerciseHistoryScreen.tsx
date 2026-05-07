@@ -33,7 +33,6 @@ export function ExerciseHistoryScreen() {
       <Card>
         <AppText variant="title">{history.data.exercise.name}</AppText>
         <AppText muted>{history.data.exercise.primaryMuscle} • {history.data.exercise.equipment}</AppText>
-        {history.data.exercise.instructions ? <AppText muted>{history.data.exercise.instructions}</AppText> : null}
       </Card>
 
       {best ? (

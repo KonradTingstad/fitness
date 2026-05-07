@@ -647,7 +647,42 @@ function parseVolumeMl(rawValue) {
   return null;
 }
 
-function inferVolumeMl(product, contentInfo) {
+function parseMeasurementFromText(rawValue) {
+  if (!rawValue) return null;
+  const normalized = String(rawValue).replace(/\u00a0/g, ' ').replace(/,/g, '.').toLowerCase();
+
+  const multipackMatch = normalized.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(ml|cl|dl|l|g|kg)\b/);
+  if (multipackMatch) {
+    const count = Number.parseFloat(multipackMatch[1]);
+    const size = Number.parseFloat(multipackMatch[2]);
+    const unit = multipackMatch[3];
+    if (!Number.isFinite(count) || count <= 0 || !Number.isFinite(size) || size <= 0) {
+      return null;
+    }
+    if (unit === 'l') return { unitValue: size * 1000, totalValue: size * 1000 * count, unit: 'ml' };
+    if (unit === 'cl') return { unitValue: size * 10, totalValue: size * 10 * count, unit: 'ml' };
+    if (unit === 'dl') return { unitValue: size * 100, totalValue: size * 100 * count, unit: 'ml' };
+    if (unit === 'ml') return { unitValue: size, totalValue: size * count, unit: 'ml' };
+    if (unit === 'kg') return { unitValue: size * 1000, totalValue: size * 1000 * count, unit: 'g' };
+    if (unit === 'g') return { unitValue: size, totalValue: size * count, unit: 'g' };
+    return null;
+  }
+
+  const singleMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(ml|cl|dl|l|g|kg)\b/);
+  if (!singleMatch) return null;
+  const size = Number.parseFloat(singleMatch[1]);
+  const unit = singleMatch[2];
+  if (!Number.isFinite(size) || size <= 0) return null;
+  if (unit === 'l') return { unitValue: size * 1000, totalValue: size * 1000, unit: 'ml' };
+  if (unit === 'cl') return { unitValue: size * 10, totalValue: size * 10, unit: 'ml' };
+  if (unit === 'dl') return { unitValue: size * 100, totalValue: size * 100, unit: 'ml' };
+  if (unit === 'ml') return { unitValue: size, totalValue: size, unit: 'ml' };
+  if (unit === 'kg') return { unitValue: size * 1000, totalValue: size * 1000, unit: 'g' };
+  if (unit === 'g') return { unitValue: size, totalValue: size, unit: 'g' };
+  return null;
+}
+
+function inferPackageMeasurement(product, contentInfo) {
   const candidates = [
     contentInfo?.packageSize,
     product?.name_extra,
@@ -656,10 +691,38 @@ function inferVolumeMl(product, contentInfo) {
   ];
 
   for (const candidate of candidates) {
-    const parsed = parseVolumeMl(candidate);
-    if (parsed !== null) return parsed;
+    const parsed = parseMeasurementFromText(candidate);
+    if (parsed) return parsed;
   }
 
+  return null;
+}
+
+function inferVolumeMl(product, contentInfo) {
+  const measurement = inferPackageMeasurement(product, contentInfo);
+  if (measurement && measurement.unit === 'ml') {
+    return measurement.unitValue;
+  }
+
+  const candidates = [contentInfo?.packageSize, product?.name_extra, product?.full_name, product?.name];
+  for (const candidate of candidates) {
+    const parsed = parseVolumeMl(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function inferServingLabel(itemType, name) {
+  const normalized = String(name ?? '').toLowerCase();
+  if (itemType === 'drink') {
+    if (/\b(flaske|bottle|juice)\b/.test(normalized)) return '1 flaske';
+    return '1 boks';
+  }
+  if (/\b(bar|proteinbar)\b/.test(normalized)) return '1 bar';
+  if (/\b(yoghurt|yogurt|beger)\b/.test(normalized)) return '1 beger';
   return null;
 }
 
@@ -732,24 +795,32 @@ function extractCaffeineMgPer100Ml(caffeineText, options = {}) {
   return null;
 }
 
-function extractCaffeineMgPerCan(product, contentInfo, localDetails) {
+function extractCaffeineValues(product, contentInfo, localDetails) {
   const volumeMl = inferVolumeMl(product, contentInfo);
-  if (!Number.isFinite(volumeMl) || volumeMl <= 0) {
-    return null;
-  }
 
   const rows = Array.isArray(localDetails?.contents_table?.rows) ? localDetails.contents_table.rows : [];
   const mergedContentText = rows.map((row) => String(row?.value ?? '')).join('\n');
-  const caffeinePer100Ml = extractCaffeineMgPer100Ml(mergedContentText, {
+  const caffeineMgPer100Ml = extractCaffeineMgPer100Ml(mergedContentText, {
     brand: product?.brand,
     volumeMl,
   });
-  if (!Number.isFinite(caffeinePer100Ml) || caffeinePer100Ml <= 0) {
-    return null;
+  if (!Number.isFinite(caffeineMgPer100Ml) || caffeineMgPer100Ml <= 0) {
+    return {
+      caffeineMgPer100Ml: null,
+      caffeineMgPerCan: null,
+      volumeMl: Number.isFinite(volumeMl) && volumeMl > 0 ? volumeMl : null,
+    };
   }
 
-  const caffeineMg = (caffeinePer100Ml * volumeMl) / 100;
-  return Number(caffeineMg.toFixed(1));
+  const caffeineMgPerCan = Number.isFinite(volumeMl) && volumeMl > 0
+    ? Number(((caffeineMgPer100Ml * volumeMl) / 100).toFixed(1))
+    : null;
+
+  return {
+    caffeineMgPer100Ml: Number(caffeineMgPer100Ml.toFixed(3)),
+    caffeineMgPerCan,
+    volumeMl: Number.isFinite(volumeMl) && volumeMl > 0 ? volumeMl : null,
+  };
 }
 
 function normalizeNutritionRows(nutritionRows) {
@@ -967,8 +1038,9 @@ function normalizeOdaProduct(product) {
   const nutritionRows = localDetails?.nutrition_info_table?.rows ?? [];
   const nutrition = normalizeNutritionRows(nutritionRows);
   const contentInfo = extractContentValues(localDetails?.contents_table?.rows ?? []);
-  const caffeineMgPerCan = extractCaffeineMgPerCan(product, contentInfo, localDetails);
+  const caffeine = extractCaffeineValues(product, contentInfo, localDetails);
   const itemType = inferItemType(product, localDetails, contentInfo);
+  const packageMeasurement = inferPackageMeasurement(product, contentInfo);
 
   const name = String(product?.full_name ?? product?.name ?? '').trim();
   if (!name) {
@@ -978,6 +1050,18 @@ function normalizeOdaProduct(product) {
       missingNutritionFields: [],
     };
   }
+
+  const baseUnit = itemType === 'drink' ? 'ml' : 'g';
+  const nutritionBasis = baseUnit === 'ml' ? 'per_100ml' : 'per_100g';
+  const hasCompatiblePackageMeasurement =
+    packageMeasurement
+    && packageMeasurement.unit === baseUnit
+    && Number.isFinite(packageMeasurement.unitValue)
+    && packageMeasurement.unitValue > 0;
+  const servingMode = hasCompatiblePackageMeasurement ? 'fixed_package' : 'custom_amount';
+  const servingLabel = hasCompatiblePackageMeasurement ? inferServingLabel(itemType, name) : null;
+  const servingSize = hasCompatiblePackageMeasurement ? Number(packageMeasurement.unitValue.toFixed(3)) : 100;
+  const servingUnit = baseUnit;
 
   const normalized = {
     id: `oda_${productId}`,
@@ -996,6 +1080,15 @@ function normalizeOdaProduct(product) {
     imported_at: nowIso(),
     private_snapshot: true,
     verified: false,
+    product_type: itemType,
+    base_unit: baseUnit,
+    nutrition_basis: nutritionBasis,
+    serving_mode: servingMode,
+    serving_label: servingLabel,
+    serving_size: servingSize,
+    serving_unit: servingUnit,
+    package_size_value: packageMeasurement ? Number(packageMeasurement.totalValue.toFixed(3)) : null,
+    package_unit: packageMeasurement?.unit ?? null,
     calories_per_100: nutrition.calories_per_100,
     kj_per_100: nutrition.kj_per_100,
     protein_per_100: nutrition.protein_per_100,
@@ -1005,7 +1098,8 @@ function normalizeOdaProduct(product) {
     saturated_fat_per_100: nutrition.saturated_fat_per_100,
     fiber_per_100: nutrition.fiber_per_100,
     salt_per_100: nutrition.salt_per_100,
-    caffeine_mg_per_can: caffeineMgPerCan,
+    caffeine_mg_per_100ml: caffeine.caffeineMgPer100Ml,
+    caffeine_mg_per_can: caffeine.caffeineMgPerCan,
     ingredients: contentInfo.ingredients,
     allergens: contentInfo.allergens,
     raw_source_data: sanitizeRawSourceData(product, localDetails, contentInfo.filteredRows),
@@ -1047,6 +1141,8 @@ function normalizeOdaProduct(product) {
 
 function normalizedToUpsertRow(normalized) {
   const sodiumMg = normalized.salt_per_100 != null ? Number((normalized.salt_per_100 * 400).toFixed(2)) : null;
+  const servingBasisSize = Number.isFinite(normalized.serving_size) && normalized.serving_size > 0 ? normalized.serving_size : 100;
+  const servingFactor = servingBasisSize / 100;
 
   return {
     id: normalized.id,
@@ -1054,18 +1150,26 @@ function normalizedToUpsertRow(normalized) {
     brand_id: null,
     brand_name: normalized.brand,
     item_type: normalized.item_type ?? 'food',
+    product_type: normalized.product_type ?? normalized.item_type ?? 'food',
+    base_unit: normalized.base_unit ?? (normalized.item_type === 'drink' ? 'ml' : 'g'),
+    nutrition_basis: normalized.nutrition_basis ?? (normalized.item_type === 'drink' ? 'per_100ml' : 'per_100g'),
+    serving_mode: normalized.serving_mode ?? 'custom_amount',
+    serving_label: normalized.serving_label ?? null,
     name: normalized.name,
-    serving_size: 100,
-    serving_unit: 'g',
-    grams_per_serving: 100,
-    calories: normalized.calories_per_100 ?? 0,
-    protein_g: normalized.protein_per_100 ?? 0,
-    carbs_g: normalized.carbs_per_100 ?? 0,
-    fat_g: normalized.fat_per_100 ?? 0,
-    fiber_g: normalized.fiber_per_100,
-    sugar_g: normalized.sugar_per_100,
-    saturated_fat_g: normalized.saturated_fat_per_100,
-    sodium_mg: sodiumMg,
+    serving_size: servingBasisSize,
+    serving_unit: normalized.serving_unit ?? (normalized.item_type === 'drink' ? 'ml' : 'g'),
+    grams_per_serving: servingBasisSize,
+    package_size: normalized.package_size,
+    package_size_value: normalized.package_size_value,
+    package_unit: normalized.package_unit,
+    calories: normalized.calories_per_100 != null ? Number((normalized.calories_per_100 * servingFactor).toFixed(3)) : 0,
+    protein_g: normalized.protein_per_100 != null ? Number((normalized.protein_per_100 * servingFactor).toFixed(3)) : 0,
+    carbs_g: normalized.carbs_per_100 != null ? Number((normalized.carbs_per_100 * servingFactor).toFixed(3)) : 0,
+    fat_g: normalized.fat_per_100 != null ? Number((normalized.fat_per_100 * servingFactor).toFixed(3)) : 0,
+    fiber_g: normalized.fiber_per_100 != null ? Number((normalized.fiber_per_100 * servingFactor).toFixed(3)) : null,
+    sugar_g: normalized.sugar_per_100 != null ? Number((normalized.sugar_per_100 * servingFactor).toFixed(3)) : null,
+    saturated_fat_g: normalized.saturated_fat_per_100 != null ? Number((normalized.saturated_fat_per_100 * servingFactor).toFixed(3)) : null,
+    sodium_mg: sodiumMg != null ? Number((sodiumMg * servingFactor).toFixed(3)) : null,
     barcode: normalized.barcode,
     source_provider: SOURCE_PROVIDER,
     source_product_id: normalized.source_product_id,
@@ -1076,7 +1180,6 @@ function normalizedToUpsertRow(normalized) {
     is_verified: false,
     is_custom: false,
     variant: normalized.variant,
-    package_size: normalized.package_size,
     kj_per_100: normalized.kj_per_100,
     calories_per_100: normalized.calories_per_100,
     protein_per_100: normalized.protein_per_100,
@@ -1086,6 +1189,7 @@ function normalizedToUpsertRow(normalized) {
     saturated_fat_per_100: normalized.saturated_fat_per_100,
     fiber_per_100: normalized.fiber_per_100,
     salt_per_100: normalized.salt_per_100,
+    caffeine_mg_per_100ml: normalized.caffeine_mg_per_100ml,
     caffeine_mg_per_can: normalized.caffeine_mg_per_can,
     ingredients: normalized.ingredients,
     allergens: normalized.allergens,
@@ -1215,6 +1319,11 @@ async function resolveFoodItemsWriteContext(client) {
     'brand_id',
     'brand_name',
     'item_type',
+    'product_type',
+    'base_unit',
+    'nutrition_basis',
+    'serving_mode',
+    'serving_label',
     'name',
     'serving_size',
     'serving_unit',
@@ -1238,6 +1347,8 @@ async function resolveFoodItemsWriteContext(client) {
     'is_custom',
     'variant',
     'package_size',
+    'package_size_value',
+    'package_unit',
     'kj_per_100',
     'calories_per_100',
     'protein_per_100',
@@ -1247,6 +1358,7 @@ async function resolveFoodItemsWriteContext(client) {
     'saturated_fat_per_100',
     'fiber_per_100',
     'salt_per_100',
+    'caffeine_mg_per_100ml',
     'caffeine_mg_per_can',
     'ingredients',
     'allergens',
@@ -1721,6 +1833,7 @@ async function runImporter(options) {
         sugar_per_100: parsed.normalized.sugar_per_100,
         fiber_per_100: parsed.normalized.fiber_per_100,
         salt_per_100: parsed.normalized.salt_per_100,
+        caffeine_mg_per_100ml: parsed.normalized.caffeine_mg_per_100ml,
         caffeine_mg_per_can: parsed.normalized.caffeine_mg_per_can,
         missingNutritionFields: parsed.missingNutritionFields,
       };
@@ -1844,6 +1957,7 @@ module.exports = {
   parseDecimalNumber,
   parseEnergyValue,
   parseVolumeMl,
+  parseMeasurementFromText,
   extractCaffeineMgPer100Ml,
   normalizeNutritionRows,
   normalizeOdaProduct,

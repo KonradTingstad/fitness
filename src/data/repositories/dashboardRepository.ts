@@ -1,6 +1,6 @@
 import { getDatabase } from '@/data/db/database';
 import { DEMO_USER_ID } from '@/data/db/ids';
-import { getDiary } from '@/data/repositories/nutritionRepository';
+import { getDiary, getNutritionTotalsForDates } from '@/data/repositories/nutritionRepository';
 import { getProfileBundle } from '@/data/repositories/settingsRepository';
 import { getActiveWorkout } from '@/data/repositories/workoutRepository';
 import { lastNDays, toLocalDateKey } from '@/domain/calculations/dates';
@@ -30,15 +30,13 @@ export async function getDashboardSummary(userId = DEMO_USER_ID): Promise<Dashbo
     [userId, weekStart],
   );
 
-  let averageCalories = 0;
-  let averageProteinG = 0;
-  for (const date of weekDates) {
-    const daily = await getDiary(date, userId);
-    averageCalories += daily.totals.calories;
-    averageProteinG += daily.totals.proteinG;
-  }
-  averageCalories = Math.round(averageCalories / weekDates.length);
-  averageProteinG = Math.round(averageProteinG / weekDates.length);
+  const weekNutrition = await getNutritionTotalsForDates(weekDates, userId);
+  const averageCalories = Math.round(
+    weekNutrition.reduce((sum, day) => sum + day.totals.calories, 0) / weekDates.length,
+  );
+  const averageProteinG = Math.round(
+    weekNutrition.reduce((sum, day) => sum + day.totals.proteinG, 0) / weekDates.length,
+  );
 
   const latestWeightRow = await db.getFirstAsync<{
     id: string;

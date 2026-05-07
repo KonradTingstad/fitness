@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 
-import { seedDatabase } from '@/data/seed/sampleData';
+import { cleanupDemoNutritionSeedData, seedDatabase } from '@/data/seed/sampleData';
 
 const DB_NAME = 'formfuel.db';
 const SCHEMA_VERSION = 1;
@@ -32,7 +32,16 @@ const savedMealItemColumns: ReadonlyArray<{ name: string; definition: string }> 
 
 const foodItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
   { name: 'item_type', definition: "TEXT NOT NULL DEFAULT 'food'" },
+  { name: 'product_type', definition: 'TEXT' },
+  { name: 'base_unit', definition: 'TEXT' },
+  { name: 'nutrition_basis', definition: 'TEXT' },
+  { name: 'serving_mode', definition: 'TEXT' },
+  { name: 'serving_label', definition: 'TEXT' },
   { name: 'caffeine_mg_per_can', definition: 'REAL' },
+  { name: 'caffeine_mg_per_100ml', definition: 'REAL' },
+  { name: 'package_size', definition: 'TEXT' },
+  { name: 'package_size_value', definition: 'REAL' },
+  { name: 'package_unit', definition: 'TEXT' },
   { name: 'kj_per_100', definition: 'REAL' },
   { name: 'calories_per_100', definition: 'REAL' },
   { name: 'protein_per_100', definition: 'REAL' },
@@ -42,6 +51,33 @@ const foodItemColumns: ReadonlyArray<{ name: string; definition: string }> = [
   { name: 'saturated_fat_per_100', definition: 'REAL' },
   { name: 'fiber_per_100', definition: 'REAL' },
   { name: 'salt_per_100', definition: 'REAL' },
+];
+
+const exerciseColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'source', definition: "TEXT NOT NULL DEFAULT 'seed'" },
+  { name: 'source_id', definition: 'TEXT' },
+  { name: 'category', definition: 'TEXT' },
+  { name: 'force', definition: 'TEXT' },
+  { name: 'mechanic', definition: 'TEXT' },
+  { name: 'image_paths', definition: 'TEXT' },
+  { name: 'is_favorite', definition: 'INTEGER NOT NULL DEFAULT 0' },
+];
+
+const exerciseMuscleGroupColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'role', definition: "TEXT NOT NULL DEFAULT 'primary'" },
+  { name: 'created_at', definition: 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+  { name: 'updated_at', definition: 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+  { name: 'deleted_at', definition: 'TEXT' },
+  { name: 'sync_status', definition: "TEXT NOT NULL DEFAULT 'synced'" },
+  { name: 'version', definition: 'INTEGER NOT NULL DEFAULT 1' },
+];
+
+const exerciseEquipmentColumns: ReadonlyArray<{ name: string; definition: string }> = [
+  { name: 'created_at', definition: 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+  { name: 'updated_at', definition: 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+  { name: 'deleted_at', definition: 'TEXT' },
+  { name: 'sync_status', definition: "TEXT NOT NULL DEFAULT 'synced'" },
+  { name: 'version', definition: 'INTEGER NOT NULL DEFAULT 1' },
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
@@ -95,7 +131,338 @@ async function ensureFoodItemColumns(db: SQLite.SQLiteDatabase): Promise<void> {
      WHERE item_type IS NULL OR item_type NOT IN ('food', 'drink')`,
   );
 
+  await db.runAsync(
+    `UPDATE food_items
+     SET product_type = CASE WHEN item_type = 'drink' THEN 'drink' ELSE 'food' END
+     WHERE product_type IS NULL`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET base_unit = CASE WHEN COALESCE(product_type, item_type, 'food') = 'drink' THEN 'ml' ELSE 'g' END
+     WHERE base_unit IS NULL`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET nutrition_basis = CASE WHEN COALESCE(base_unit, 'g') = 'ml' THEN 'per_100ml' ELSE 'per_100g' END
+     WHERE nutrition_basis IS NULL`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET serving_mode = CASE
+       WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(package_unit, '') IN ('g', 'ml') THEN 'fixed_package'
+       WHEN COALESCE(serving_label, '') <> '' THEN 'suggested_amount'
+       ELSE 'custom_amount'
+     END
+     WHERE serving_mode IS NULL`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET product_type = CASE
+       WHEN COALESCE(item_type, 'food') = 'drink' THEN 'drink'
+       WHEN LOWER(COALESCE(serving_unit, '')) IN ('ml', 'cl', 'dl', 'l') THEN 'drink'
+       WHEN COALESCE(package_unit, '') = 'ml' THEN 'drink'
+       WHEN COALESCE(caffeine_mg_per_100ml, 0) > 0 THEN 'drink'
+       ELSE 'food'
+     END
+     WHERE product_type IS NULL
+       OR product_type NOT IN ('food', 'drink')
+       OR (
+         product_type = 'food'
+         AND (
+           COALESCE(item_type, 'food') = 'drink'
+           OR LOWER(COALESCE(serving_unit, '')) IN ('ml', 'cl', 'dl', 'l')
+           OR COALESCE(package_unit, '') = 'ml'
+           OR COALESCE(caffeine_mg_per_100ml, 0) > 0
+         )
+       )`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET base_unit = CASE
+       WHEN COALESCE(product_type, item_type, 'food') = 'drink' THEN 'ml'
+       ELSE 'g'
+     END
+     WHERE base_unit IS NULL
+       OR base_unit NOT IN ('g', 'ml')
+       OR (COALESCE(product_type, item_type, 'food') = 'drink' AND base_unit <> 'ml')
+       OR (COALESCE(product_type, item_type, 'food') <> 'drink' AND base_unit <> 'g')`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET nutrition_basis = CASE WHEN COALESCE(base_unit, 'g') = 'ml' THEN 'per_100ml' ELSE 'per_100g' END
+     WHERE nutrition_basis IS NULL
+       OR nutrition_basis NOT IN ('per_100g', 'per_100ml')
+       OR (COALESCE(base_unit, 'g') = 'ml' AND nutrition_basis <> 'per_100ml')
+       OR (COALESCE(base_unit, 'g') = 'g' AND nutrition_basis <> 'per_100g')`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET item_type = CASE WHEN COALESCE(product_type, 'food') = 'drink' THEN 'drink' ELSE 'food' END
+     WHERE item_type IS NULL
+       OR item_type NOT IN ('food', 'drink')
+       OR item_type <> CASE WHEN COALESCE(product_type, 'food') = 'drink' THEN 'drink' ELSE 'food' END`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET
+       serving_size = package_size_value,
+       serving_unit = CASE
+         WHEN COALESCE(package_unit, '') IN ('ml', 'g') THEN package_unit
+         ELSE serving_unit
+       END,
+       grams_per_serving = package_size_value
+     WHERE deleted_at IS NULL
+       AND COALESCE(product_type, item_type, 'food') = 'drink'
+       AND COALESCE(package_size_value, 0) > 0
+       AND COALESCE(package_unit, '') IN ('ml', 'g')
+       AND (
+         COALESCE(serving_size, 0) <= 0
+         OR COALESCE(serving_size, 0) = 100
+         OR (
+           COALESCE(serving_size, 0) > 0
+           AND COALESCE(package_size_value, 0) >= 180
+           AND COALESCE(serving_size, 0) < (COALESCE(package_size_value, 0) * 0.5)
+         )
+       )`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET caffeine_mg_per_100ml = ROUND((caffeine_mg_per_can * 100.0) / (
+       CASE
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+         WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+         WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+         ELSE 0
+       END
+     ), 3)
+     WHERE deleted_at IS NULL
+       AND COALESCE(item_type, 'food') = 'drink'
+       AND COALESCE(caffeine_mg_per_can, 0) > 0
+       AND (
+         COALESCE(caffeine_mg_per_100ml, 0) <= 0
+         OR (
+           ABS(COALESCE(caffeine_mg_per_100ml, 0) - COALESCE(caffeine_mg_per_can, 0)) <= 1
+           AND (
+             CASE
+               WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+               WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+               WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+               WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+               WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+               WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+               ELSE 0
+             END
+           ) > 120
+         )
+       )
+       AND (
+         CASE
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+           WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+           WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+           ELSE 0
+         END
+       ) > 0`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET caffeine_mg_per_100ml = ROUND((caffeine_mg_per_100ml * 100.0) / (
+       CASE
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+         WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+         WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+         WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+         ELSE 0
+       END
+     ), 3)
+     WHERE deleted_at IS NULL
+       AND COALESCE(item_type, 'food') = 'drink'
+       AND COALESCE(caffeine_mg_per_100ml, 0) > 80
+       AND (
+         COALESCE(caffeine_mg_per_can, 0) <= 0
+         OR ABS(COALESCE(caffeine_mg_per_100ml, 0) - COALESCE(caffeine_mg_per_can, 0)) <= 1
+       )
+       AND (
+         CASE
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+           WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+           WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+           WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+           ELSE 0
+         END
+       ) >= 180
+       AND (
+         (COALESCE(caffeine_mg_per_100ml, 0) * 100.0) / (
+           CASE
+             WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('ml', 'milliliter', 'milliliters', 'g', 'gram', 'grams') THEN serving_size
+             WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('l', 'liter', 'litre', 'liters', 'litres') THEN serving_size * 1000
+             WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('cl', 'centiliter', 'centilitre') THEN serving_size * 10
+             WHEN COALESCE(serving_size, 0) > 0 AND COALESCE(LOWER(serving_unit), '') IN ('dl', 'deciliter', 'decilitre') THEN serving_size * 100
+             WHEN COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value
+             WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving
+             ELSE 0
+           END
+         )
+       ) BETWEEN 1 AND 80`,
+  );
+
+  await db.runAsync(
+    `UPDATE food_items
+     SET sodium_mg = ROUND((salt_per_100 * 400.0) * (
+       CASE
+         WHEN COALESCE(serving_size, 0) > 0 THEN serving_size / 100.0
+         WHEN COALESCE(product_type, item_type, 'food') = 'drink' AND COALESCE(package_size_value, 0) > 0 AND COALESCE(LOWER(package_unit), '') IN ('ml', 'g', 'gram', 'grams') THEN package_size_value / 100.0
+         WHEN COALESCE(grams_per_serving, 0) > 0 THEN grams_per_serving / 100.0
+         ELSE 1.0
+       END
+     ), 3)
+     WHERE deleted_at IS NULL
+       AND COALESCE(salt_per_100, 0) > 0
+       AND (
+         sodium_mg IS NULL
+         OR sodium_mg < 0
+         OR sodium_mg > 10000
+       )`,
+  );
+
   await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_items_item_type ON food_items(item_type);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_items_product_type ON food_items(product_type);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_items_serving_mode ON food_items(serving_mode);');
+}
+
+async function ensureExerciseColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(exercises);');
+  const existingColumns = new Set(columns.map((column) => column.name));
+
+  for (const column of exerciseColumns) {
+    if (existingColumns.has(column.name)) {
+      continue;
+    }
+
+    await db.execAsync(`ALTER TABLE exercises ADD COLUMN ${column.name} ${column.definition};`);
+  }
+
+  await db.runAsync(
+    `UPDATE exercises
+     SET source = CASE WHEN is_custom = 1 THEN 'custom' ELSE 'seed' END
+     WHERE source IS NULL OR source = '' OR (is_custom = 1 AND source = 'seed')`,
+  );
+
+  await db.runAsync(
+    `UPDATE exercises
+     SET category = CASE WHEN LOWER(primary_muscle) = 'cardio' THEN 'cardio' ELSE 'strength' END
+     WHERE category IS NULL OR category = ''`,
+  );
+
+  await db.runAsync(
+    `UPDATE exercises
+     SET image_paths = '[]'
+     WHERE image_paths IS NULL OR image_paths = ''`,
+  );
+
+  await db.runAsync(
+    `UPDATE exercises
+     SET is_favorite = 0
+     WHERE is_favorite IS NULL`,
+  );
+
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercises_source ON exercises(source);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercises_source_id ON exercises(source, source_id);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercises_category ON exercises(category);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercises_favorite ON exercises(is_favorite);');
+  await db.execAsync(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_exercises_unique_source_id ON exercises(source, source_id) WHERE source_id IS NOT NULL;',
+  );
+}
+
+async function ensureExerciseMetadataTables(db: SQLite.SQLiteDatabase): Promise<void> {
+  await db.execAsync(
+    `CREATE TABLE IF NOT EXISTS exercise_muscle_groups (
+      id TEXT PRIMARY KEY,
+      exercise_id TEXT NOT NULL,
+      muscle_group TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'primary',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT,
+      sync_status TEXT NOT NULL DEFAULT 'synced',
+      version INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY(exercise_id) REFERENCES exercises(id)
+    );`,
+  );
+  await db.execAsync(
+    `CREATE TABLE IF NOT EXISTS exercise_equipment (
+      id TEXT PRIMARY KEY,
+      exercise_id TEXT NOT NULL,
+      equipment TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT,
+      sync_status TEXT NOT NULL DEFAULT 'synced',
+      version INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY(exercise_id) REFERENCES exercises(id)
+    );`,
+  );
+
+  const muscleColumns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(exercise_muscle_groups);');
+  const existingMuscleColumns = new Set(muscleColumns.map((column) => column.name));
+  for (const column of exerciseMuscleGroupColumns) {
+    if (existingMuscleColumns.has(column.name)) {
+      continue;
+    }
+    await db.execAsync(`ALTER TABLE exercise_muscle_groups ADD COLUMN ${column.name} ${column.definition};`);
+  }
+
+  const equipmentColumns = await db.getAllAsync<ExistingColumn>('PRAGMA table_info(exercise_equipment);');
+  const existingEquipmentColumns = new Set(equipmentColumns.map((column) => column.name));
+  for (const column of exerciseEquipmentColumns) {
+    if (existingEquipmentColumns.has(column.name)) {
+      continue;
+    }
+    await db.execAsync(`ALTER TABLE exercise_equipment ADD COLUMN ${column.name} ${column.definition};`);
+  }
+
+  await db.runAsync(
+    `UPDATE exercise_muscle_groups
+     SET role = 'primary'
+     WHERE role IS NULL OR role = ''`,
+  );
+
+  await db.runAsync(
+    `UPDATE exercise_muscle_groups
+     SET sync_status = 'synced'
+     WHERE sync_status IS NULL OR sync_status = ''`,
+  );
+
+  await db.runAsync(
+    `UPDATE exercise_equipment
+     SET sync_status = 'synced'
+     WHERE sync_status IS NULL OR sync_status = ''`,
+  );
+
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercise_muscle_groups_exercise ON exercise_muscle_groups(exercise_id);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercise_muscle_groups_role ON exercise_muscle_groups(role);');
+  await db.execAsync('CREATE INDEX IF NOT EXISTS idx_exercise_equipment_exercise ON exercise_equipment(exercise_id);');
 }
 
 export async function initializeDatabase(): Promise<void> {
@@ -105,6 +472,8 @@ export async function initializeDatabase(): Promise<void> {
   await ensureDiaryEntryColumns(db);
   await ensureSavedMealItemColumns(db);
   await ensureFoodItemColumns(db);
+  await ensureExerciseColumns(db);
+  await ensureExerciseMetadataTables(db);
   const version = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_metadata WHERE key = ?', [
     'schema_version',
   ]);
@@ -112,6 +481,7 @@ export async function initializeDatabase(): Promise<void> {
     await db.runAsync('INSERT INTO app_metadata (key, value) VALUES (?, ?)', ['schema_version', String(SCHEMA_VERSION)]);
   }
   await seedDatabase(db);
+  await cleanupDemoNutritionSeedData(db);
 }
 
 const auditColumns = `
@@ -192,10 +562,16 @@ CREATE INDEX IF NOT EXISTS idx_goal_settings_user ON goal_settings(user_id);
 CREATE TABLE IF NOT EXISTS exercises (
   id TEXT PRIMARY KEY,
   user_id TEXT,
+  source TEXT NOT NULL DEFAULT 'seed',
+  source_id TEXT,
+  category TEXT,
+  force TEXT,
+  mechanic TEXT,
   name TEXT NOT NULL,
   primary_muscle TEXT NOT NULL,
   equipment TEXT NOT NULL,
-  instructions TEXT,
+  image_paths TEXT,
+  is_favorite INTEGER NOT NULL DEFAULT 0,
   is_custom INTEGER NOT NULL DEFAULT 0,
   ${auditColumns}
 );
@@ -426,6 +802,11 @@ CREATE TABLE IF NOT EXISTS food_items (
   brand_id TEXT,
   brand_name TEXT,
   item_type TEXT NOT NULL DEFAULT 'food' CHECK (item_type IN ('food', 'drink')),
+  product_type TEXT,
+  base_unit TEXT,
+  nutrition_basis TEXT,
+  serving_mode TEXT,
+  serving_label TEXT,
   name TEXT NOT NULL,
   serving_size REAL NOT NULL,
   serving_unit TEXT NOT NULL,
@@ -439,6 +820,7 @@ CREATE TABLE IF NOT EXISTS food_items (
   saturated_fat_g REAL,
   sodium_mg REAL,
   caffeine_mg_per_can REAL,
+  caffeine_mg_per_100ml REAL,
   kj_per_100 REAL,
   calories_per_100 REAL,
   protein_per_100 REAL,
@@ -448,6 +830,9 @@ CREATE TABLE IF NOT EXISTS food_items (
   saturated_fat_per_100 REAL,
   fiber_per_100 REAL,
   salt_per_100 REAL,
+  package_size TEXT,
+  package_size_value REAL,
+  package_unit TEXT,
   barcode TEXT,
   source_provider TEXT NOT NULL,
   is_verified INTEGER NOT NULL DEFAULT 0,

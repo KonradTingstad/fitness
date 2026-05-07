@@ -27,8 +27,8 @@ export function CustomFoodScreen() {
     name: '',
     brandName: '',
     barcode: '',
-    servingSize: '1',
-    servingUnit: 'serving',
+    servingSize: initialMode === 'drink' ? '100' : '1',
+    servingUnit: initialMode === 'drink' ? 'ml' : 'serving',
     gramsPerServing: '100',
     calories: '',
     proteinG: '',
@@ -38,7 +38,7 @@ export function CustomFoodScreen() {
     sugarG: '',
     saturatedFatG: '',
     sodiumMg: '',
-    caffeineMgPerCan: '',
+    caffeineMgPer100Ml: '',
   });
 
   const save = useMutation({
@@ -57,6 +57,7 @@ export function CustomFoodScreen() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(route.params.localDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(route.params.localDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({
         predicate: (query) =>
@@ -68,13 +69,38 @@ export function CustomFoodScreen() {
     onError: (error) => Alert.alert(`Custom ${modeLabel}`, error instanceof Error ? error.message : `Unable to save ${modeLabel}.`),
   });
 
+  const handleTypeChange = (next: FoodItemType) => {
+    setItemType(next);
+    if (next !== 'drink') {
+      return;
+    }
+    setForm((current) => {
+      const servingSize = current.servingSize.trim();
+      const servingUnit = current.servingUnit.trim().toLowerCase();
+      const shouldApplyDrinkDefaults =
+        !servingSize.length
+        || servingSize === '1'
+        || servingUnit === 'serving'
+        || !servingUnit.length;
+      if (!shouldApplyDrinkDefaults) {
+        return current;
+      }
+      return {
+        ...current,
+        servingSize: '100',
+        servingUnit: 'ml',
+        gramsPerServing: current.gramsPerServing.trim().length ? current.gramsPerServing : '100',
+      };
+    });
+  };
+
   return (
     <NutritionScreen>
       <NutritionCard>
         <AppText variant="section">Type</AppText>
         <View style={styles.typeRow}>
-          <TypeChip label="Food" value="food" current={itemType} onChange={setItemType} />
-          <TypeChip label="Drink" value="drink" current={itemType} onChange={setItemType} />
+          <TypeChip label="Food" value="food" current={itemType} onChange={handleTypeChange} />
+          <TypeChip label="Drink" value="drink" current={itemType} onChange={handleTypeChange} />
         </View>
       </NutritionCard>
       <NutritionCard>
@@ -113,7 +139,12 @@ export function CustomFoodScreen() {
           <Field label="Sodium mg (optional)" value={form.sodiumMg} onChangeText={(sodiumMg) => setForm((current) => ({ ...current, sodiumMg }))} keyboardType="decimal-pad" />
         </View>
         {itemType === 'drink' ? (
-          <Field label="Caffeine mg per can" value={form.caffeineMgPerCan} onChangeText={(caffeineMgPerCan) => setForm((current) => ({ ...current, caffeineMgPerCan }))} keyboardType="decimal-pad" />
+          <Field
+            label="Caffeine mg per 100 ml"
+            value={form.caffeineMgPer100Ml}
+            onChangeText={(caffeineMgPer100Ml) => setForm((current) => ({ ...current, caffeineMgPer100Ml }))}
+            keyboardType="decimal-pad"
+          />
         ) : null}
       </NutritionCard>
       <NutritionButton label={`Save and log ${modeLabel}`} icon={Save} onPress={() => save.mutate()} />

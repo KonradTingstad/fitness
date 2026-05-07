@@ -109,6 +109,12 @@ function roundMetric(value: number): number {
   return Math.round(value);
 }
 
+function formatAmount(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/\.?0+$/, '');
+}
+
 function entryCalories(entry: DiaryEntry): number {
   return entry.totalCalories ?? entry.caloriesSnapshot * entry.servings;
 }
@@ -534,6 +540,7 @@ function MealSummaryCard({
   calorieTarget,
   entries,
   previousEntries,
+  foodsById,
   expanded,
   icon: Icon,
   color,
@@ -554,6 +561,7 @@ function MealSummaryCard({
   calorieTarget: number;
   entries: DiaryEntry[];
   previousEntries: DiaryEntry[];
+  foodsById: Map<string, FoodItem>;
   expanded: boolean;
   icon: ComponentType<LucideProps>;
   color: string;
@@ -649,35 +657,46 @@ function MealSummaryCard({
         {expanded ? (
           <View style={styles.mealExpandedContent}>
             {entries.length ? (
-              entries.map((entry) => (
-                <View key={entry.id} style={styles.mealFoodRow}>
-                  <View style={[styles.mealFoodDot, { backgroundColor: color }]} />
-                  <View style={styles.mealFoodCopy}>
-                    <AppText weight="700" numberOfLines={1}>
-                      {entry.foodNameSnapshot}
-                    </AppText>
-                    <AppText muted variant="small">
-                      {entry.servings} serving{entry.servings === 1 ? '' : 's'}
-                    </AppText>
+              entries.map((entry) => {
+                const entryFood = foodsById.get(entry.foodItemId);
+                const unit = entryFood?.baseUnit ?? (entryFood?.itemType === 'drink' ? 'ml' : 'g');
+                const quantityLabel =
+                  entry.quantityType === 'gram' && Number.isFinite(entry.totalGrams) && (entry.totalGrams ?? 0) > 0
+                    ? `${roundMetric(entry.totalGrams ?? 0)} ${unit}`
+                    : entryFood?.servingMode === 'fixed_package' && entryFood.servingLabel
+                      ? `${formatAmount(entry.servings)} × ${entryFood.servingLabel}`
+                      : `${formatAmount(entry.servings)} serving${entry.servings === 1 ? '' : 's'}`;
+
+                return (
+                  <View key={entry.id} style={styles.mealFoodRow}>
+                    <View style={[styles.mealFoodDot, { backgroundColor: color }]} />
+                    <View style={styles.mealFoodCopy}>
+                      <AppText weight="700" numberOfLines={1}>
+                        {entry.foodNameSnapshot}
+                      </AppText>
+                      <AppText muted variant="small">
+                        {quantityLabel}
+                      </AppText>
+                    </View>
+                    <View style={styles.mealFoodTrail}>
+                      <AppText weight="800" style={{ color }}>
+                        {roundMetric(entryCalories(entry))} kcal
+                      </AppText>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={Boolean(deletingEntryId)}
+                        onPress={() => onDeleteEntry(entry)}
+                        style={({ pressed }) => [
+                          styles.mealFoodDeleteButton,
+                          { opacity: deletingEntryId ? 0.45 : pressed ? 0.78 : 1 },
+                        ]}
+                      >
+                        <Trash2 size={14} color={theme.colors.danger} strokeWidth={2.4} />
+                      </Pressable>
+                    </View>
                   </View>
-                  <View style={styles.mealFoodTrail}>
-                    <AppText weight="800" style={{ color }}>
-                      {roundMetric(entryCalories(entry))} kcal
-                    </AppText>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={Boolean(deletingEntryId)}
-                      onPress={() => onDeleteEntry(entry)}
-                      style={({ pressed }) => [
-                        styles.mealFoodDeleteButton,
-                        { opacity: deletingEntryId ? 0.45 : pressed ? 0.78 : 1 },
-                      ]}
-                    >
-                      <Trash2 size={14} color={theme.colors.danger} strokeWidth={2.4} />
-                    </Pressable>
-                  </View>
-                </View>
-              ))
+                );
+              })
             ) : (
               <View style={styles.mealEmptyRow}>
                 <AppText muted>No foods logged.</AppText>
@@ -1012,7 +1031,7 @@ export function NutritionDiaryScreen() {
   const mealsPerDayTarget = useMealsPerDayTarget();
   const nutritionLibrary = useNutritionLibrary();
   const recentFoods = useRecentFoods('food');
-  const searchedFoods = useFoodSearch(searchQuery, 'food');
+  const searchedFoods = useFoodSearch(searchQuery, 'food', { enabled: searchQuery.trim().length > 0 });
   const foodCatalog = useFoodSearch('', 'all');
   const frequentlyLoggedFoods = useFrequentlyLoggedFoods('food');
   const calorieStreak = useCalorieStreak(selectedDate);
@@ -1042,6 +1061,7 @@ export function NutritionDiaryScreen() {
       }),
     onSuccess: (_entryId, input) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -1068,6 +1088,7 @@ export function NutritionDiaryScreen() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -1080,6 +1101,7 @@ export function NutritionDiaryScreen() {
     mutationFn: (input: { entryId: string }) => deleteDiaryEntry(input.entryId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -1103,6 +1125,7 @@ export function NutritionDiaryScreen() {
     mutationFn: (input: { savedMealId: string; mealSlot: MealSlot }) => logSavedMeal(input.savedMealId, input.mealSlot, selectedDate),
     onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.diary(selectedDate) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.weeklyCalories(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.calorieStreak(selectedDate) });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -1760,6 +1783,7 @@ export function NutritionDiaryScreen() {
             calorieTarget={calorieTarget}
             entries={section.entries}
             previousEntries={section.previousEntries}
+            foodsById={foodsById}
             expanded={expandedMealSlots.has(section.slot)}
             icon={section.icon}
             color={section.color}
@@ -1844,7 +1868,15 @@ export function NutritionDiaryScreen() {
       {searchedFoods.isLoading && searchQuery.trim().length ? (
         <LoadingState label="Searching foods" />
       ) : filteredSearchResults.length ? (
-        filteredSearchResults.map((food) => (
+        filteredSearchResults.map((food) => {
+          const basisCalories = Number.isFinite(food.caloriesPer100) ? Math.round(food.caloriesPer100 ?? 0) : Math.round(food.calories);
+          const fixedAmountLabel =
+            Number.isFinite(food.servingSize) && food.servingSize > 0
+              ? `${Math.round(food.servingSize)} ${food.servingUnit || food.baseUnit || (food.itemType === 'drink' ? 'ml' : 'g')}`
+              : food.packageSize && food.packageUnit
+                ? `${Math.round(food.packageSize)} ${food.packageUnit}`
+                : null;
+          return (
           <NutritionCard key={food.id} style={styles.foodCard}>
             <View style={styles.foodRow}>
               <View style={[styles.foodThumb, { backgroundColor: theme.colors.surfaceAlt }]}>
@@ -1855,7 +1887,15 @@ export function NutritionDiaryScreen() {
                   {food.name}
                 </AppText>
                 <AppText muted variant="small" style={styles.foodMeta}>
-                  {food.calories} kcal • per {food.servingSize} {food.servingUnit}
+                  {food.brandName ? `${food.brandName} • ` : ''}
+                  {food.servingMode === 'fixed_package'
+                    ? `${food.servingLabel ?? '1 enhet'}${fixedAmountLabel ? ` • ${fixedAmountLabel}` : ''}`
+                    : food.servingMode === 'suggested_amount'
+                      ? `${Math.round(food.servingSize)} ${food.baseUnit ?? (food.itemType === 'drink' ? 'ml' : 'g')}${food.servingLabel ? ` • ${food.servingLabel}` : ''}`
+                      : `${food.nutritionBasis === 'per_100ml' ? 'per 100 ml' : 'per 100 g'} basis`}
+                </AppText>
+                <AppText muted variant="small" style={styles.foodMeta}>
+                  {basisCalories} kcal • {food.nutritionBasis === 'per_100ml' ? 'per 100 ml' : 'per 100 g'}
                 </AppText>
                 <FoodMacroChips protein={food.proteinG} carbs={food.carbsG} fat={food.fatG} />
               </View>
@@ -1876,7 +1916,8 @@ export function NutritionDiaryScreen() {
               </Pressable>
             </View>
           </NutritionCard>
-        ))
+          );
+        })
       ) : (
         <EmptyState
           icon={Search}

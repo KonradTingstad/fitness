@@ -24,6 +24,8 @@ import { ProgressWidgetGrouping, ProgressWidgetMetric, ProgressWidgetTimeRange }
 import {
   getCompletedWorkoutCount,
   getActiveWorkout,
+  ExerciseSearchFilters,
+  getExerciseFilterOptions,
   getExerciseHistory,
   getRecentWorkouts,
   getWorkoutProgress,
@@ -34,6 +36,7 @@ import {
   listWorkoutSessionsForRange,
   listExercises,
   listRoutines,
+  searchExercises,
 } from '@/data/repositories/workoutRepository';
 import { lastNDays, shiftLocalDate, toLocalDateKey } from '@/domain/calculations/dates';
 import { queryKeys } from '@/hooks/queryKeys';
@@ -51,7 +54,11 @@ export function useActiveWorkout() {
 }
 
 export function useWorkoutSession(id: string) {
-  return useQuery({ queryKey: queryKeys.workout(id), queryFn: () => getWorkoutSession(id), refetchInterval: 5_000 });
+  return useQuery({
+    queryKey: queryKeys.workout(id),
+    queryFn: () => getWorkoutSession(id),
+    refetchInterval: (query) => (query.state.data?.status === 'active' ? 5_000 : false),
+  });
 }
 
 export function useRecentWorkouts() {
@@ -123,11 +130,15 @@ export function useTodayCaffeine(localDate = toLocalDateKey()) {
   });
 }
 
-export function useFoodSearch(query: string, itemType: FoodSearchItemType = 'food') {
+export function useFoodSearch(
+  query: string,
+  itemType: FoodSearchItemType = 'food',
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: queryKeys.foodSearch(query, itemType),
     queryFn: () => searchFoodItems(query, itemType),
-    enabled: query.trim().length >= 0,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -189,7 +200,28 @@ export function useProgressWidgetSeries(
 }
 
 export function useExercises() {
-  return useQuery({ queryKey: queryKeys.exercises, queryFn: () => listExercises() });
+  return useQuery({
+    queryKey: queryKeys.exercises,
+    queryFn: () => listExercises(),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  });
+}
+
+export function useExerciseSearch(filters: ExerciseSearchFilters = {}) {
+  return useQuery({
+    queryKey: queryKeys.exerciseSearch(
+      filters.query ?? '',
+      filters.primaryMuscle ?? 'All',
+      filters.equipment ?? 'All',
+      filters.category ?? 'All',
+    ),
+    queryFn: () => searchExercises(filters),
+  });
+}
+
+export function useExerciseFilterOptions() {
+  return useQuery({ queryKey: queryKeys.exerciseFilterOptions, queryFn: () => getExerciseFilterOptions() });
 }
 
 export function useExerciseHistory(exerciseId: string) {

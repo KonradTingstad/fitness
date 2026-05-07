@@ -8,13 +8,16 @@ import { DEFAULT_CAFFEINE_TARGET_MG, getCaffeineTargetMg } from '@/data/reposito
 import {
   DiaryDay,
   DiaryEntry,
+  FoodBaseUnit,
   FoodItem,
   FoodItemType,
   MealSlot,
+  NutritionBasis,
   NutritionTotals,
   Recipe,
   SavedMeal,
   SavedMealItem,
+  ServingMode,
 } from '@/domain/models';
 import { CustomFoodForm } from '@/domain/validation/forms';
 
@@ -24,10 +27,18 @@ type FoodRow = {
   brand_id: string | null;
   brand_name: string | null;
   item_type: string | null;
+  product_type: string | null;
+  base_unit: string | null;
+  nutrition_basis: string | null;
+  serving_mode: string | null;
+  serving_label: string | null;
   name: string;
   serving_size: number;
   serving_unit: string;
   grams_per_serving: number;
+  package_size: string | null;
+  package_size_value: number | null;
+  package_unit: string | null;
   calories: number;
   protein_g: number;
   carbs_g: number;
@@ -36,6 +47,7 @@ type FoodRow = {
   sugar_g: number | null;
   saturated_fat_g: number | null;
   sodium_mg: number | null;
+  caffeine_mg_per_100ml: number | null;
   caffeine_mg_per_can: number | null;
   kj_per_100: number | null;
   calories_per_100: number | null;
@@ -57,9 +69,17 @@ type SupabaseFoodSearchRow = {
   name: string;
   brand_name: string | null;
   item_type?: string | null;
+  product_type?: string | null;
+  base_unit?: string | null;
+  nutrition_basis?: string | null;
+  serving_mode?: string | null;
+  serving_label?: string | null;
   serving_size: number | null;
   serving_unit: string | null;
   grams_per_serving: number | null;
+  package_size?: string | null;
+  package_size_value?: number | null;
+  package_unit?: string | null;
   calories: number | null;
   protein_g: number | null;
   carbs_g: number | null;
@@ -68,6 +88,7 @@ type SupabaseFoodSearchRow = {
   sugar_g?: number | null;
   saturated_fat_g?: number | null;
   sodium_mg: number | null;
+  caffeine_mg_per_100ml?: number | null;
   caffeine_mg_per_can?: number | null;
   kj_per_100?: number | null;
   calories_per_100?: number | null;
@@ -147,8 +168,21 @@ type CaffeineDiaryEntryRow = {
   quantity_type: 'portion' | 'gram' | null;
   total_grams: number | null;
   drink_name: string;
+  serving_size: number;
+  serving_unit: string;
+  package_size: string | null;
+  package_size_value: number | null;
+  package_unit: string | null;
+  source_provider: string | null;
+  caffeine_mg_per_100ml: number | null;
   caffeine_mg_per_can: number | null;
   grams_per_serving: number;
+};
+
+type SupabaseCaffeineRow = {
+  id: string;
+  caffeine_mg_per_100ml: number | null;
+  caffeine_mg_per_can: number | null;
 };
 
 export interface DiarySummary {
@@ -195,7 +229,7 @@ export type SavedMealItemInput = {
 const CALORIE_STREAK_LOOKBACK_DAYS = 90;
 
 const SUPABASE_SEARCH_SELECT_EXTENDED =
-  'id, name, brand_name, item_type, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom';
+  'id, name, brand_name, item_type, product_type, base_unit, nutrition_basis, serving_mode, serving_label, serving_size, serving_unit, grams_per_serving, package_size, package_size_value, package_unit, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_100ml, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom';
 const SUPABASE_SEARCH_SELECT_LEGACY =
   'id, name, brand_name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg, source_provider, is_verified, is_custom';
 
@@ -208,6 +242,63 @@ function isSupabaseMissingColumnError(error: { code?: string; message?: string }
 
 function normalizeFoodItemType(value: unknown): FoodItemType {
   return value === 'drink' ? 'drink' : 'food';
+}
+
+function normalizeFoodBaseUnit(value: unknown, fallbackItemType: FoodItemType): FoodBaseUnit {
+  if (value === 'ml') return 'ml';
+  if (value === 'g') return 'g';
+  return fallbackItemType === 'drink' ? 'ml' : 'g';
+}
+
+function normalizeNutritionBasis(value: unknown, baseUnit: FoodBaseUnit): NutritionBasis {
+  if (value === 'per_100ml') return 'per_100ml';
+  if (value === 'per_100g') return 'per_100g';
+  return baseUnit === 'ml' ? 'per_100ml' : 'per_100g';
+}
+
+function normalizeServingMode(value: unknown, packageSize: number | null, servingLabel: string | null): ServingMode {
+  if (value === 'fixed_package' || value === 'suggested_amount' || value === 'custom_amount') {
+    return value;
+  }
+  if (Number.isFinite(packageSize) && (packageSize ?? 0) > 0) {
+    return 'fixed_package';
+  }
+  if (servingLabel && servingLabel.trim().length) {
+    return 'suggested_amount';
+  }
+  return 'custom_amount';
+}
+
+function parsePackageSizeLabel(rawValue: string | null | undefined): { size: number | null; unit: FoodBaseUnit | null } {
+  if (!rawValue) return { size: null, unit: null };
+  const normalized = String(rawValue).replace(/\u00a0/g, ' ').replace(/,/g, '.').toLowerCase();
+
+  const multipackMatch = normalized.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(ml|cl|dl|l|g|kg)\b/);
+  if (multipackMatch) {
+    const singleSize = Number.parseFloat(multipackMatch[2]);
+    const unitToken = multipackMatch[3];
+    if (Number.isFinite(singleSize) && singleSize > 0) {
+      if (unitToken === 'l') return { size: singleSize * 1000, unit: 'ml' };
+      if (unitToken === 'cl') return { size: singleSize * 10, unit: 'ml' };
+      if (unitToken === 'dl') return { size: singleSize * 100, unit: 'ml' };
+      if (unitToken === 'ml') return { size: singleSize, unit: 'ml' };
+      if (unitToken === 'kg') return { size: singleSize * 1000, unit: 'g' };
+      if (unitToken === 'g') return { size: singleSize, unit: 'g' };
+    }
+  }
+
+  const singleMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(ml|cl|dl|l|g|kg)\b/);
+  if (!singleMatch) return { size: null, unit: null };
+  const size = Number.parseFloat(singleMatch[1]);
+  if (!Number.isFinite(size) || size <= 0) return { size: null, unit: null };
+  const unitToken = singleMatch[2];
+  if (unitToken === 'l') return { size: size * 1000, unit: 'ml' };
+  if (unitToken === 'cl') return { size: size * 10, unit: 'ml' };
+  if (unitToken === 'dl') return { size: size * 100, unit: 'ml' };
+  if (unitToken === 'ml') return { size, unit: 'ml' };
+  if (unitToken === 'kg') return { size: size * 1000, unit: 'g' };
+  if (unitToken === 'g') return { size, unit: 'g' };
+  return { size: null, unit: null };
 }
 
 function matchesFoodItemType(itemType: FoodItemType, filter: FoodSearchItemType): boolean {
@@ -303,12 +394,65 @@ export async function getDiary(localDate = toLocalDateKey(), userId = DEMO_USER_
 }
 
 export async function getNutritionTotalsForDates(localDates: string[], userId = DEMO_USER_ID): Promise<Array<{ localDate: string; totals: NutritionTotals }>> {
-  const rows: Array<{ localDate: string; totals: NutritionTotals }> = [];
-  for (const localDate of localDates) {
-    const diary = await getDiary(localDate, userId);
-    rows.push({ localDate, totals: diary.totals });
+  if (!localDates.length) {
+    return [];
   }
-  return rows;
+
+  const db = await getDatabase();
+  const uniqueDates = Array.from(new Set(localDates));
+  const placeholders = uniqueDates.map(() => '?').join(', ');
+  const rows = await db.getAllAsync<{
+    local_date: string;
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    fiber_g: number;
+    sodium_mg: number;
+  }>(
+    `SELECT
+       d.local_date,
+       COALESCE(SUM(COALESCE(e.total_calories, e.calories_snapshot * e.servings)), 0) AS calories,
+       COALESCE(SUM(COALESCE(e.total_protein_g, e.protein_g_snapshot * e.servings)), 0) AS protein_g,
+       COALESCE(SUM(COALESCE(e.total_carbs_g, e.carbs_g_snapshot * e.servings)), 0) AS carbs_g,
+       COALESCE(SUM(COALESCE(e.total_fat_g, e.fat_g_snapshot * e.servings)), 0) AS fat_g,
+       COALESCE(SUM(COALESCE(e.fiber_g_snapshot, 0) * e.servings), 0) AS fiber_g,
+       COALESCE(SUM(COALESCE(e.sodium_mg_snapshot, 0) * e.servings), 0) AS sodium_mg
+     FROM diary_days d
+     LEFT JOIN diary_entries e ON e.diary_day_id = d.id AND e.deleted_at IS NULL
+     WHERE d.user_id = ?
+       AND d.deleted_at IS NULL
+       AND d.local_date IN (${placeholders})
+     GROUP BY d.local_date`,
+    [userId, ...uniqueDates],
+  );
+
+  const totalsByDate = new Map<string, NutritionTotals>(
+    rows.map((row) => [
+      row.local_date,
+      {
+        calories: row.calories,
+        proteinG: row.protein_g,
+        carbsG: row.carbs_g,
+        fatG: row.fat_g,
+        fiberG: row.fiber_g,
+        sodiumMg: row.sodium_mg,
+      },
+    ]),
+  );
+
+  return localDates.map((localDate) => ({
+    localDate,
+    totals:
+      totalsByDate.get(localDate) ?? {
+        calories: 0,
+        proteinG: 0,
+        carbsG: 0,
+        fatG: 0,
+        fiberG: 0,
+        sodiumMg: 0,
+      },
+  }));
 }
 
 export async function getCalorieGoalStreak(endLocalDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<number> {
@@ -350,8 +494,8 @@ export async function searchFoodItems(query: string, itemType: FoodSearchItemTyp
        AND (? = '%%' OR name LIKE ? OR brand_name LIKE ? OR barcode LIKE ?)
        AND (
          ? = 'all'
-         OR (? = 'food' AND (item_type = 'food' OR item_type IS NULL OR item_type = ''))
-         OR (? = 'drink' AND item_type = 'drink')
+         OR (? = 'food' AND COALESCE(product_type, item_type, 'food') = 'food')
+         OR (? = 'drink' AND COALESCE(product_type, item_type, 'food') = 'drink')
        )
      ORDER BY is_custom DESC, is_verified DESC, name ASC
      LIMIT 50`,
@@ -385,8 +529,8 @@ export async function getRecentFoods(itemType: FoodSearchItemType = 'food', user
        AND e.deleted_at IS NULL
        AND (
          ? = 'all'
-         OR (? = 'food' AND (f.item_type = 'food' OR f.item_type IS NULL OR f.item_type = ''))
-         OR (? = 'drink' AND f.item_type = 'drink')
+         OR (? = 'food' AND COALESCE(f.product_type, f.item_type, 'food') = 'food')
+         OR (? = 'drink' AND COALESCE(f.product_type, f.item_type, 'food') = 'drink')
        )
      ORDER BY e.logged_at DESC
      LIMIT 10`,
@@ -419,8 +563,8 @@ export async function getFrequentlyLoggedFoods(itemType: FoodSearchItemType = 'f
        AND f.deleted_at IS NULL
        AND (
          ? = 'all'
-         OR (? = 'food' AND (f.item_type = 'food' OR f.item_type IS NULL OR f.item_type = ''))
-         OR (? = 'drink' AND f.item_type = 'drink')
+         OR (? = 'food' AND COALESCE(f.product_type, f.item_type, 'food') = 'food')
+         OR (? = 'drink' AND COALESCE(f.product_type, f.item_type, 'food') = 'drink')
        )
      GROUP BY f.id
      ORDER BY total_logs DESC, last_logged_at DESC
@@ -434,6 +578,75 @@ export async function getFrequentlyLoggedFoods(itemType: FoodSearchItemType = 'f
     commonMealSlot: row.common_meal_slot,
     lastLoggedAt: row.last_logged_at,
   }));
+}
+
+function resolveFoodBaseUnitFromRow(food: FoodRow): FoodBaseUnit {
+  return normalizeFoodBaseUnit(food.base_unit, normalizeFoodItemType(food.product_type ?? food.item_type));
+}
+
+function resolveFoodNutritionBasisFromRow(food: FoodRow, baseUnit: FoodBaseUnit): NutritionBasis {
+  return normalizeNutritionBasis(food.nutrition_basis, baseUnit);
+}
+
+function resolveAmountPerServingInBaseUnit(food: FoodRow, baseUnit: FoodBaseUnit): number | null {
+  const servingSize = Number.isFinite(food.serving_size) && food.serving_size > 0 ? food.serving_size : 0;
+  const servingUnit = String(food.serving_unit ?? '')
+    .trim()
+    .toLowerCase();
+  if (servingSize > 0) {
+    if (baseUnit === 'ml') {
+      const servingMl = toMilliliters(servingSize, servingUnit);
+      if (Number.isFinite(servingMl) && (servingMl ?? 0) > 0) {
+        return servingMl!;
+      }
+      if (servingUnit === 'g' || servingUnit === 'gram' || servingUnit === 'grams') {
+        return servingSize;
+      }
+    } else if (baseUnit === 'g') {
+      if (servingUnit === 'g' || servingUnit === 'gram' || servingUnit === 'grams') {
+        return servingSize;
+      }
+      if (servingUnit === 'kg' || servingUnit === 'kilogram' || servingUnit === 'kilograms') {
+        return servingSize * 1000;
+      }
+    }
+  }
+  const gramsPerServing = Number.isFinite(food.grams_per_serving) && food.grams_per_serving > 0 ? food.grams_per_serving : 0;
+  return gramsPerServing > 0 ? gramsPerServing : null;
+}
+
+function resolveFoodAmountInBaseUnitForEntry(
+  food: FoodRow,
+  servings: number,
+  quantityType: 'portion' | 'gram',
+  totalGrams: number,
+  baseUnit: FoodBaseUnit,
+): number | null {
+  if (quantityType === 'gram' && Number.isFinite(totalGrams) && totalGrams > 0) {
+    return totalGrams;
+  }
+  const amountPerServing = resolveAmountPerServingInBaseUnit(food, baseUnit);
+  if (Number.isFinite(amountPerServing) && (amountPerServing ?? 0) > 0) {
+    return servings * amountPerServing!;
+  }
+  return null;
+}
+
+function resolvePer100FromRow(
+  per100Value: number | null,
+  perServingValue: number,
+  amountPerServingInBaseUnit: number | null,
+): number | null {
+  if (Number.isFinite(per100Value) && per100Value != null) {
+    return per100Value;
+  }
+  if (!Number.isFinite(perServingValue)) {
+    return null;
+  }
+  if (!Number.isFinite(amountPerServingInBaseUnit) || (amountPerServingInBaseUnit ?? 0) <= 0) {
+    return null;
+  }
+  return (perServingValue * 100) / amountPerServingInBaseUnit!;
 }
 
 export async function addDiaryEntry(input: {
@@ -467,18 +680,50 @@ export async function addDiaryEntry(input: {
   }
 
   const servings = input.servings;
+  const quantityType = input.quantityType ?? 'portion';
   const gramsPerServing = Number.isFinite(food.grams_per_serving) && food.grams_per_serving > 0 ? food.grams_per_serving : 100;
   const totalGrams = Number.isFinite(input.totalGrams) && (input.totalGrams as number) > 0 ? (input.totalGrams as number) : servings * gramsPerServing;
-  const totalCalories =
-    Number.isFinite(input.totalCalories) && (input.totalCalories as number) >= 0 ? (input.totalCalories as number) : food.calories * servings;
-  const totalProteinG =
-    Number.isFinite(input.totalProteinG) && (input.totalProteinG as number) >= 0
-      ? (input.totalProteinG as number)
+
+  const baseUnit = resolveFoodBaseUnitFromRow(food);
+  const nutritionBasis = resolveFoodNutritionBasisFromRow(food, baseUnit);
+  const amountPerServingInBaseUnit = resolveAmountPerServingInBaseUnit(food, baseUnit);
+  const amountInBaseUnit = resolveFoodAmountInBaseUnitForEntry(food, servings, quantityType, totalGrams, baseUnit);
+  const amountFactor = Number.isFinite(amountInBaseUnit) && (amountInBaseUnit ?? 0) > 0 ? amountInBaseUnit! / 100 : null;
+
+  const caloriesPer100 = resolvePer100FromRow(food.calories_per_100, food.calories, amountPerServingInBaseUnit);
+  const proteinPer100 = resolvePer100FromRow(food.protein_per_100, food.protein_g, amountPerServingInBaseUnit);
+  const carbsPer100 = resolvePer100FromRow(food.carbs_per_100, food.carbs_g, amountPerServingInBaseUnit);
+  const fatPer100 = resolvePer100FromRow(food.fat_per_100, food.fat_g, amountPerServingInBaseUnit);
+
+  const computedCaloriesFromBasis =
+    nutritionBasis && amountFactor != null && caloriesPer100 != null ? Math.max(0, caloriesPer100 * amountFactor) : null;
+  const computedProteinFromBasis =
+    nutritionBasis && amountFactor != null && proteinPer100 != null ? Math.max(0, proteinPer100 * amountFactor) : null;
+  const computedCarbsFromBasis =
+    nutritionBasis && amountFactor != null && carbsPer100 != null ? Math.max(0, carbsPer100 * amountFactor) : null;
+  const computedFatFromBasis =
+    nutritionBasis && amountFactor != null && fatPer100 != null ? Math.max(0, fatPer100 * amountFactor) : null;
+
+  const totalCalories = Number.isFinite(input.totalCalories) && (input.totalCalories as number) >= 0
+    ? (input.totalCalories as number)
+    : computedCaloriesFromBasis != null
+      ? Math.round(computedCaloriesFromBasis)
+      : food.calories * servings;
+  const totalProteinG = Number.isFinite(input.totalProteinG) && (input.totalProteinG as number) >= 0
+    ? (input.totalProteinG as number)
+    : computedProteinFromBasis != null
+      ? roundTo(computedProteinFromBasis, 3)
       : food.protein_g * servings;
-  const totalCarbsG =
-    Number.isFinite(input.totalCarbsG) && (input.totalCarbsG as number) >= 0 ? (input.totalCarbsG as number) : food.carbs_g * servings;
-  const totalFatG =
-    Number.isFinite(input.totalFatG) && (input.totalFatG as number) >= 0 ? (input.totalFatG as number) : food.fat_g * servings;
+  const totalCarbsG = Number.isFinite(input.totalCarbsG) && (input.totalCarbsG as number) >= 0
+    ? (input.totalCarbsG as number)
+    : computedCarbsFromBasis != null
+      ? roundTo(computedCarbsFromBasis, 3)
+      : food.carbs_g * servings;
+  const totalFatG = Number.isFinite(input.totalFatG) && (input.totalFatG as number) >= 0
+    ? (input.totalFatG as number)
+    : computedFatFromBasis != null
+      ? roundTo(computedFatFromBasis, 3)
+      : food.fat_g * servings;
 
   const id = createId('entry');
   const now = new Date().toISOString();
@@ -493,7 +738,7 @@ export async function addDiaryEntry(input: {
       input.mealSlot,
       input.foodItemId,
       servings,
-      input.quantityType ?? 'portion',
+      quantityType,
       totalGrams,
       totalCalories,
       totalProteinG,
@@ -520,7 +765,7 @@ export async function addDiaryEntry(input: {
     mealSlot: input.mealSlot,
     foodItemId: input.foodItemId,
     servings,
-    quantityType: input.quantityType ?? 'portion',
+    quantityType,
     totalGrams,
     totalCalories,
     totalProteinG,
@@ -569,9 +814,64 @@ export async function addWater(amountMl: number, localDate = toLocalDateKey(), u
 }
 
 function resolveCaffeineFromDiaryRow(row: CaffeineDiaryEntryRow): number {
+  const caffeinePer100Ml = resolveCaffeinePer100MlFromDiaryRow(row);
+  const amountMl = resolveDiaryDrinkAmountMl(row);
+  if (caffeinePer100Ml > 0 && Number.isFinite(amountMl) && (amountMl ?? 0) > 0) {
+    return Math.max(0, (caffeinePer100Ml * amountMl!) / 100);
+  }
+  return resolveLegacyCaffeineFromDiaryRow(row);
+}
+
+function resolveCaffeinePer100MlFromDiaryRow(row: CaffeineDiaryEntryRow): number {
+  const directPer100Ml = Number.isFinite(row.caffeine_mg_per_100ml) ? Math.max(0, row.caffeine_mg_per_100ml ?? 0) : 0;
+  const caffeinePerServing = Number.isFinite(row.caffeine_mg_per_can) ? Math.max(0, row.caffeine_mg_per_can ?? 0) : 0;
+  const servingVolumeMl = resolveDiaryDrinkServingVolumeMl(row);
+  const hasServingVolume = Number.isFinite(servingVolumeMl) && (servingVolumeMl ?? 0) > 0;
+  const derivedFromPerServing =
+    caffeinePerServing > 0 && hasServingVolume
+      ? (caffeinePerServing * 100) / servingVolumeMl!
+      : null;
+
+  if (directPer100Ml > 0) {
+    // Handle legacy rows where per-can caffeine was stored in the per-100ml field.
+    if (hasServingVolume && servingVolumeMl! >= 180) {
+      if (caffeinePerServing > 0 && Math.abs(directPer100Ml - caffeinePerServing) <= 1 && derivedFromPerServing != null) {
+        return Math.max(0, derivedFromPerServing);
+      }
+      if (directPer100Ml > 80) {
+        const normalizedFromLikelyPerCan = (directPer100Ml * 100) / servingVolumeMl!;
+        if (Number.isFinite(normalizedFromLikelyPerCan) && normalizedFromLikelyPerCan > 0 && normalizedFromLikelyPerCan <= 80) {
+          return normalizedFromLikelyPerCan;
+        }
+      }
+    }
+    if (directPer100Ml > 80) {
+      const inferredVolume = inferLikelyDrinkVolumeMlFromDiaryRow(row, directPer100Ml);
+      if (Number.isFinite(inferredVolume) && (inferredVolume ?? 0) > 0) {
+        const normalizedFromLikelyPerCan = (directPer100Ml * 100) / inferredVolume!;
+        if (Number.isFinite(normalizedFromLikelyPerCan) && normalizedFromLikelyPerCan > 0 && normalizedFromLikelyPerCan <= 80) {
+          return normalizedFromLikelyPerCan;
+        }
+      }
+    }
+    return directPer100Ml;
+  }
+
+  if (derivedFromPerServing != null) {
+    return Math.max(0, derivedFromPerServing);
+  }
+  return 0;
+}
+
+function resolveLegacyCaffeineFromDiaryRow(row: CaffeineDiaryEntryRow): number {
   const caffeinePerServing = Number.isFinite(row.caffeine_mg_per_can) ? Math.max(0, row.caffeine_mg_per_can ?? 0) : 0;
   if (caffeinePerServing <= 0) {
     return 0;
+  }
+  const amountMl = resolveDiaryDrinkAmountMl(row);
+  const servingVolumeMl = resolveDiaryDrinkServingVolumeMl(row);
+  if (Number.isFinite(amountMl) && (amountMl ?? 0) > 0 && Number.isFinite(servingVolumeMl) && (servingVolumeMl ?? 0) > 0) {
+    return Math.max(0, caffeinePerServing * (amountMl! / servingVolumeMl!));
   }
   const gramsPerServing = Number.isFinite(row.grams_per_serving) && row.grams_per_serving > 0 ? row.grams_per_serving : 0;
   const totalGrams = Number.isFinite(row.total_grams) && (row.total_grams ?? 0) > 0 ? row.total_grams ?? 0 : 0;
@@ -580,7 +880,198 @@ function resolveCaffeineFromDiaryRow(row: CaffeineDiaryEntryRow): number {
   return Math.max(0, caffeinePerServing * servingFactor);
 }
 
+function toMilliliters(value: number, unitRaw: string): number | null {
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const unit = String(unitRaw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!unit.length) {
+    return null;
+  }
+  if (unit === 'ml' || unit === 'milliliter' || unit === 'milliliters') {
+    return value;
+  }
+  if (unit === 'l' || unit === 'liter' || unit === 'litre' || unit === 'liters' || unit === 'litres') {
+    return value * 1000;
+  }
+  if (unit === 'cl' || unit === 'centiliter' || unit === 'centilitre') {
+    return value * 10;
+  }
+  if (unit === 'dl' || unit === 'deciliter' || unit === 'decilitre') {
+    return value * 100;
+  }
+  return null;
+}
+
+function resolveDiaryDrinkAmountMl(row: CaffeineDiaryEntryRow): number | null {
+  const totalGrams = Number.isFinite(row.total_grams) && (row.total_grams ?? 0) > 0 ? row.total_grams ?? 0 : 0;
+  if (row.quantity_type === 'gram' && totalGrams > 0) {
+    // Legacy drink entries track volume through grams; treat as ml-equivalent for caffeine math.
+    return totalGrams;
+  }
+
+  const servings = Number.isFinite(row.servings) && row.servings > 0 ? row.servings : 0;
+  if (servings <= 0) {
+    return null;
+  }
+
+  const servingVolumeMl = resolveDiaryDrinkServingVolumeMl(row);
+  if (Number.isFinite(servingVolumeMl) && (servingVolumeMl ?? 0) > 0) {
+    return servings * servingVolumeMl!;
+  }
+
+  const servingSize = Number.isFinite(row.serving_size) && row.serving_size > 0 ? row.serving_size : 0;
+  if (servingSize > 0) {
+    const servingSizeMl = toMilliliters(servingSize, row.serving_unit);
+    if (Number.isFinite(servingSizeMl) && (servingSizeMl ?? 0) > 0) {
+      return servings * servingSizeMl!;
+    }
+
+    const servingUnit = String(row.serving_unit ?? '').trim().toLowerCase();
+    if (servingUnit === 'g' || servingUnit === 'gram' || servingUnit === 'grams') {
+      return servings * servingSize;
+    }
+  }
+
+  const gramsPerServing = Number.isFinite(row.grams_per_serving) && row.grams_per_serving > 0 ? row.grams_per_serving : 0;
+  return gramsPerServing > 0 ? servings * gramsPerServing : null;
+}
+
+function resolveDiaryDrinkServingVolumeMl(row: CaffeineDiaryEntryRow): number | null {
+  if (Number.isFinite(row.package_size_value) && (row.package_size_value ?? 0) > 0) {
+    const unit = String(row.package_unit ?? '')
+      .trim()
+      .toLowerCase();
+    if (unit === 'ml') {
+      return row.package_size_value ?? null;
+    }
+    if (unit === 'g' || unit === 'gram' || unit === 'grams') {
+      return row.package_size_value ?? null;
+    }
+  }
+
+  const parsedPackage = parsePackageSizeLabel(row.package_size ?? null);
+  if (Number.isFinite(parsedPackage.size) && (parsedPackage.size ?? 0) > 0 && parsedPackage.unit != null) {
+    if (parsedPackage.unit === 'ml' || parsedPackage.unit === 'g') {
+      return parsedPackage.size ?? null;
+    }
+  }
+
+  const servingSize = Number.isFinite(row.serving_size) && row.serving_size > 0 ? row.serving_size : 0;
+  if (servingSize > 0) {
+    if (servingSize <= 120) {
+      const directPer100Ml = Number.isFinite(row.caffeine_mg_per_100ml) ? Math.max(0, row.caffeine_mg_per_100ml ?? 0) : 0;
+      const inferredVolume = inferLikelyDrinkVolumeMlFromDiaryRow(row, directPer100Ml);
+      if (Number.isFinite(inferredVolume) && (inferredVolume ?? 0) > 0 && inferredVolume! > servingSize) {
+        return inferredVolume!;
+      }
+    }
+    const servingSizeMl = toMilliliters(servingSize, row.serving_unit);
+    if (Number.isFinite(servingSizeMl) && (servingSizeMl ?? 0) > 0) {
+      return servingSizeMl!;
+    }
+
+    const servingUnit = String(row.serving_unit ?? '').trim().toLowerCase();
+    if (servingUnit === 'g' || servingUnit === 'gram' || servingUnit === 'grams') {
+      return servingSize;
+    }
+  }
+
+  const gramsPerServing = Number.isFinite(row.grams_per_serving) && row.grams_per_serving > 0 ? row.grams_per_serving : 0;
+  return gramsPerServing > 0 ? gramsPerServing : null;
+}
+
+function inferLikelyDrinkVolumeMlFromDiaryRow(row: CaffeineDiaryEntryRow, caffeinePerCanLike: number): number | null {
+  if (!Number.isFinite(caffeinePerCanLike) || caffeinePerCanLike <= 0) {
+    return null;
+  }
+  if (caffeinePerCanLike <= 80) {
+    return null;
+  }
+  const sourceProvider = String(row.source_provider ?? '').trim().toLowerCase();
+  // Keep this fallback scoped to imported grocery drinks where per-can values are common.
+  if (sourceProvider && sourceProvider !== 'oda_private_snapshot' && sourceProvider !== 'seed') {
+    return null;
+  }
+
+  const drinkName = String(row.drink_name ?? '').toLowerCase();
+  const looksLikeEnergyDrink = /\b(monster|red\s*bull|battery|burn|rockstar|energy|energidrikk)\b/.test(drinkName);
+  if (!looksLikeEnergyDrink) {
+    return null;
+  }
+
+  if (caffeinePerCanLike >= 140 && caffeinePerCanLike <= 260) return 500;
+  if (caffeinePerCanLike >= 90 && caffeinePerCanLike < 140) return 330;
+  if (caffeinePerCanLike > 80 && caffeinePerCanLike < 90) return 250;
+  return null;
+}
+
+async function backfillMissingDrinkCaffeineForDate(localDate: string, userId: string): Promise<void> {
+  const supabaseClient = supabase;
+  if (!isSupabaseConfigured || !supabaseClient) {
+    return;
+  }
+
+  const db = await getDatabase();
+  const missingDrinkRows = await db.getAllAsync<{ food_item_id: string }>(
+    `SELECT DISTINCT f.id as food_item_id
+     FROM diary_days d
+     JOIN diary_entries e ON e.diary_day_id = d.id AND e.deleted_at IS NULL
+     JOIN food_items f ON f.id = e.food_item_id AND f.deleted_at IS NULL
+     WHERE d.user_id = ?
+       AND d.local_date = ?
+       AND d.deleted_at IS NULL
+       AND COALESCE(f.product_type, f.item_type, 'food') = 'drink'
+       AND COALESCE(f.caffeine_mg_per_100ml, 0) <= 0`,
+    [userId, localDate],
+  );
+  if (!missingDrinkRows.length) {
+    return;
+  }
+
+  const missingFoodIds = Array.from(
+    new Set(
+      missingDrinkRows
+        .map((row) => row.food_item_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  );
+  if (!missingFoodIds.length) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const chunkSize = 100;
+  for (let offset = 0; offset < missingFoodIds.length; offset += chunkSize) {
+    const chunkIds = missingFoodIds.slice(offset, offset + chunkSize);
+    const { data, error } = await supabaseClient
+      .from('food_items')
+      .select('id, caffeine_mg_per_100ml, caffeine_mg_per_can')
+      .in('id', chunkIds)
+      .is('deleted_at', null);
+    if (error || !Array.isArray(data)) {
+      continue;
+    }
+
+    for (const row of data as SupabaseCaffeineRow[]) {
+      const caffeine = row.caffeine_mg_per_100ml;
+      if (!Number.isFinite(caffeine) || (caffeine ?? 0) <= 0) {
+        continue;
+      }
+      await db.runAsync(
+        `UPDATE food_items
+         SET caffeine_mg_per_100ml = ?, updated_at = ?
+         WHERE id = ?`,
+        [caffeine, now, row.id],
+      );
+    }
+  }
+}
+
 export async function getDailyCaffeineSummary(localDate = toLocalDateKey(), userId = DEMO_USER_ID): Promise<CaffeineDailySummary> {
+  await backfillMissingDrinkCaffeineForDate(localDate, userId);
   const db = await getDatabase();
   const [diaryRows, legacyRows, goalCaffeineMg] = await Promise.all([
     db.getAllAsync<CaffeineDiaryEntryRow>(
@@ -591,6 +1082,13 @@ export async function getDailyCaffeineSummary(localDate = toLocalDateKey(), user
          e.quantity_type,
          e.total_grams,
          f.name as drink_name,
+         f.serving_size,
+         f.serving_unit,
+         f.package_size,
+         f.package_size_value,
+         f.package_unit,
+         f.source_provider,
+         f.caffeine_mg_per_100ml,
          f.caffeine_mg_per_can,
          f.grams_per_serving
        FROM diary_days d
@@ -599,7 +1097,7 @@ export async function getDailyCaffeineSummary(localDate = toLocalDateKey(), user
        WHERE d.user_id = ?
          AND d.local_date = ?
          AND d.deleted_at IS NULL
-         AND COALESCE(f.caffeine_mg_per_can, 0) > 0
+         AND (COALESCE(f.caffeine_mg_per_100ml, 0) > 0 OR COALESCE(f.caffeine_mg_per_can, 0) > 0)
        ORDER BY e.logged_at DESC`,
       [userId, localDate],
     ),
@@ -654,31 +1152,34 @@ async function ensureManualCaffeineDrinkFood(
   drinkName: string,
   caffeineMg: number,
   userId: string,
-): Promise<{ id: string; caffeineMgPerCan: number }> {
+): Promise<{ id: string }> {
   const db = await getDatabase();
   const normalizedName = drinkName.trim();
-  const normalizedCaffeineMg = Math.round(Math.max(0, caffeineMg));
+  const normalizedCaffeineMgPer100Ml = Math.round(Math.max(0, caffeineMg));
   const existing = await db.getFirstAsync<FoodRow>(
     `SELECT *
      FROM food_items
      WHERE user_id = ?
-       AND item_type = 'drink'
+       AND COALESCE(product_type, item_type, 'food') = 'drink'
        AND is_custom = 1
        AND deleted_at IS NULL
        AND LOWER(name) = LOWER(?)
-       AND CAST(ROUND(COALESCE(caffeine_mg_per_can, 0), 0) AS INTEGER) = ?
+       AND (
+         CAST(ROUND(COALESCE(caffeine_mg_per_100ml, 0), 0) AS INTEGER) = ?
+         OR CAST(ROUND(COALESCE(caffeine_mg_per_can, 0), 0) AS INTEGER) = ?
+       )
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [userId, normalizedName, normalizedCaffeineMg],
+    [userId, normalizedName, normalizedCaffeineMgPer100Ml, normalizedCaffeineMgPer100Ml],
   );
 
   if (!existing) {
     const form: CustomFoodForm = {
       name: normalizedName,
       brandName: undefined,
-      servingSize: 1,
-      servingUnit: 'serving',
-      gramsPerServing: 1,
+      servingSize: 100,
+      servingUnit: 'ml',
+      gramsPerServing: 100,
       calories: 0,
       proteinG: 0,
       carbsG: 0,
@@ -687,13 +1188,13 @@ async function ensureManualCaffeineDrinkFood(
       sugarG: 0,
       saturatedFatG: 0,
       sodiumMg: 0,
-      caffeineMgPerCan: normalizedCaffeineMg,
+      caffeineMgPer100Ml: normalizedCaffeineMgPer100Ml,
       barcode: undefined,
     };
     const id = await createCustomFood(form, userId, 'drink');
-    return { id, caffeineMgPerCan: normalizedCaffeineMg };
+    return { id };
   }
-  return { id: existing.id, caffeineMgPerCan: normalizedCaffeineMg };
+  return { id: existing.id };
 }
 
 export async function logManualCaffeineDrink(
@@ -762,7 +1263,7 @@ export async function deleteLatestCaffeineLog(localDate = toLocalDateKey(), user
      WHERE d.user_id = ?
        AND d.local_date = ?
        AND d.deleted_at IS NULL
-       AND COALESCE(f.caffeine_mg_per_can, 0) > 0
+       AND (COALESCE(f.caffeine_mg_per_100ml, 0) > 0 OR COALESCE(f.caffeine_mg_per_can, 0) > 0)
      ORDER BY e.logged_at DESC
      LIMIT 1`,
     [userId, localDate],
@@ -825,20 +1326,32 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
   const customId = createId('custom_food');
   const now = new Date().toISOString();
   const derived = deriveCustomFoodExtendedNutrition(form);
+  const baseUnit: FoodBaseUnit = itemType === 'drink' ? 'ml' : 'g';
+  const nutritionBasis: NutritionBasis = baseUnit === 'ml' ? 'per_100ml' : 'per_100g';
+  const servingMode: ServingMode = 'custom_amount';
+
   await db.runAsync(
     `INSERT INTO food_items
-    (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, user_id, brand_id, brand_name, item_type, product_type, base_unit, nutrition_basis, serving_mode, serving_label, name, serving_size, serving_unit, grams_per_serving, package_size, package_size_value, package_unit, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_100ml, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       userId,
       null,
       form.brandName ?? null,
       itemType,
+      itemType,
+      baseUnit,
+      nutritionBasis,
+      servingMode,
+      null,
       form.name,
       form.servingSize,
       form.servingUnit,
       form.gramsPerServing,
+      null,
+      null,
+      null,
       form.calories,
       form.proteinG,
       form.carbsG,
@@ -847,7 +1360,8 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
       form.sugarG ?? null,
       form.saturatedFatG ?? null,
       form.sodiumMg ?? null,
-      form.caffeineMgPerCan ?? null,
+      form.caffeineMgPer100Ml ?? null,
+      null,
       derived.kjPer100,
       derived.caloriesPer100,
       derived.proteinPer100,
@@ -874,7 +1388,18 @@ export async function createCustomFood(form: CustomFoodForm, userId = DEMO_USER_
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [customId, userId, id, now, now, null, 'pending', 1],
   );
-  await enqueueSync('food_item', id, 'insert', { ...form, itemType, ...derived });
+  await enqueueSync('food_item', id, 'insert', {
+    ...form,
+    itemType,
+    productType: itemType,
+    baseUnit,
+    nutritionBasis,
+    servingMode,
+    servingLabel: null,
+    packageSize: null,
+    packageUnit: null,
+    ...derived,
+  });
   return id;
 }
 
@@ -1452,7 +1977,8 @@ async function getOrCreateDiaryDay(localDate: string, userId: string): Promise<s
 }
 
 async function searchSupabaseFoodItems(query: string, itemType: FoodSearchItemType): Promise<FoodItem[]> {
-  if (!isSupabaseConfigured || !supabase) {
+  const supabaseClient = supabase;
+  if (!isSupabaseConfigured || !supabaseClient) {
     return [];
   }
 
@@ -1462,57 +1988,86 @@ async function searchSupabaseFoodItems(query: string, itemType: FoodSearchItemTy
   }
 
   try {
-    const rpcResponse = await supabase.rpc('search_food_items_snapshot', {
+    const likeSearch = `%${trimmed}%`;
+    const fetchFallback = async (): Promise<{ foods: FoodItem[]; usedLegacyFallback: boolean; failed: boolean }> => {
+      let fallbackQuery = supabaseClient
+        .from('food_items')
+        .select(SUPABASE_SEARCH_SELECT_EXTENDED)
+        .is('deleted_at', null)
+        .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch},barcode.ilike.${likeSearch}`)
+        .order('is_custom', { ascending: false })
+        .order('is_verified', { ascending: false })
+        .order('name', { ascending: true })
+        .limit(50);
+      if (itemType !== 'all') {
+        fallbackQuery = fallbackQuery.eq('item_type', itemType);
+      }
+      let fallback: {
+        data: SupabaseFoodSearchRow[] | null;
+        error: { code?: string; message?: string } | null;
+      } = await fallbackQuery;
+      let usedLegacyFallback = false;
+
+      if (isSupabaseMissingColumnError(fallback.error)) {
+        usedLegacyFallback = true;
+        fallback = await supabaseClient
+          .from('food_items')
+          .select(SUPABASE_SEARCH_SELECT_LEGACY)
+          .is('deleted_at', null)
+          .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch}`)
+          .order('is_custom', { ascending: false })
+          .order('is_verified', { ascending: false })
+          .order('name', { ascending: true })
+          .limit(50);
+      }
+
+      if (fallback.error || !Array.isArray(fallback.data)) {
+        return { foods: [], usedLegacyFallback, failed: true };
+      }
+
+      const foods = fallback.data.map(mapSupabaseSearchFood).filter((food) => matchesFoodItemType(food.itemType, itemType));
+      return { foods, usedLegacyFallback, failed: false };
+    };
+
+    const rpcResponse = await supabaseClient.rpc('search_food_items_snapshot', {
       search_query: trimmed,
       max_results: 50,
       search_item_type: itemType === 'all' ? null : itemType,
     });
 
     if (!rpcResponse.error && Array.isArray(rpcResponse.data)) {
-      return rpcResponse.data.map(mapSupabaseSearchFood).filter((food) => matchesFoodItemType(food.itemType, itemType));
+      const rpcRows = rpcResponse.data as Array<Record<string, unknown>>;
+      const rpcMissingCaffeineField =
+        (itemType === 'drink' || itemType === 'all')
+        && rpcRows.length > 0
+        && !Object.prototype.hasOwnProperty.call(rpcRows[0], 'caffeine_mg_per_100ml');
+
+      if (!rpcMissingCaffeineField) {
+        return rpcRows
+          .map((row) => mapSupabaseSearchFood(row as SupabaseFoodSearchRow))
+          .filter((food) => matchesFoodItemType(food.itemType, itemType));
+      }
+
+      const fallback = await fetchFallback();
+      if (!fallback.failed) {
+        if (fallback.usedLegacyFallback && itemType === 'drink') {
+          return [];
+        }
+        return fallback.foods;
+      }
+      return rpcRows
+        .map((row) => mapSupabaseSearchFood(row as SupabaseFoodSearchRow))
+        .filter((food) => matchesFoodItemType(food.itemType, itemType));
     }
 
-    const likeSearch = `%${trimmed}%`;
-    let fallbackQuery = supabase
-      .from('food_items')
-      .select(SUPABASE_SEARCH_SELECT_EXTENDED)
-      .is('deleted_at', null)
-      .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch},barcode.ilike.${likeSearch}`)
-      .order('is_custom', { ascending: false })
-      .order('is_verified', { ascending: false })
-      .order('name', { ascending: true })
-      .limit(50);
-    if (itemType !== 'all') {
-      fallbackQuery = fallbackQuery.eq('item_type', itemType);
-    }
-    let fallback: {
-      data: SupabaseFoodSearchRow[] | null;
-      error: { code?: string; message?: string } | null;
-    } = await fallbackQuery;
-    let usedLegacyFallback = false;
-
-    if (isSupabaseMissingColumnError(fallback.error)) {
-      usedLegacyFallback = true;
-      fallback = await supabase
-        .from('food_items')
-        .select(SUPABASE_SEARCH_SELECT_LEGACY)
-        .is('deleted_at', null)
-        .or(`name.ilike.${likeSearch},brand_name.ilike.${likeSearch}`)
-        .order('is_custom', { ascending: false })
-        .order('is_verified', { ascending: false })
-        .order('name', { ascending: true })
-        .limit(50);
-    }
-
-    if (fallback.error || !Array.isArray(fallback.data)) {
+    const fallback = await fetchFallback();
+    if (fallback.failed) {
       return [];
     }
-
-    const mapped = fallback.data.map(mapSupabaseSearchFood);
-    if (usedLegacyFallback && itemType === 'drink') {
+    if (fallback.usedLegacyFallback && itemType === 'drink') {
       return [];
     }
-    return mapped.filter((food) => matchesFoodItemType(food.itemType, itemType));
+    return fallback.foods;
   } catch {
     return [];
   }
@@ -1527,8 +2082,12 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
   const now = new Date().toISOString();
 
   for (const food of foods) {
+    const itemType = normalizeFoodItemType(food.productType ?? food.itemType);
+    const baseUnit = food.baseUnit ?? (itemType === 'drink' ? 'ml' : 'g');
+    const nutritionBasis = food.nutritionBasis ?? (baseUnit === 'ml' ? 'per_100ml' : 'per_100g');
+    const servingMode = food.servingMode ?? (food.packageSize ? 'fixed_package' : food.servingLabel ? 'suggested_amount' : 'custom_amount');
     const servingSize = Number.isFinite(food.servingSize) && food.servingSize > 0 ? food.servingSize : 100;
-    const servingUnit = food.servingUnit?.trim() ? food.servingUnit : 'g';
+    const servingUnit = food.servingUnit?.trim() ? food.servingUnit : baseUnit;
     const gramsPerServing = Number.isFinite(food.gramsPerServing) && food.gramsPerServing > 0 ? food.gramsPerServing : 100;
     const calories = Number.isFinite(food.calories) ? food.calories : 0;
     const proteinG = Number.isFinite(food.proteinG) ? food.proteinG : 0;
@@ -1537,17 +2096,25 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
 
     await db.runAsync(
       `INSERT INTO food_items
-      (id, user_id, brand_id, brand_name, item_type, name, serving_size, serving_unit, grams_per_serving, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, user_id, brand_id, brand_name, item_type, product_type, base_unit, nutrition_basis, serving_mode, serving_label, name, serving_size, serving_unit, grams_per_serving, package_size, package_size_value, package_unit, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, saturated_fat_g, sodium_mg, caffeine_mg_per_100ml, caffeine_mg_per_can, kj_per_100, calories_per_100, protein_per_100, carbs_per_100, sugar_per_100, fat_per_100, saturated_fat_per_100, fiber_per_100, salt_per_100, barcode, source_provider, is_verified, is_custom, created_at, updated_at, deleted_at, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         user_id = excluded.user_id,
         brand_id = excluded.brand_id,
         brand_name = excluded.brand_name,
         item_type = excluded.item_type,
+        product_type = excluded.product_type,
+        base_unit = excluded.base_unit,
+        nutrition_basis = excluded.nutrition_basis,
+        serving_mode = excluded.serving_mode,
+        serving_label = excluded.serving_label,
         name = excluded.name,
         serving_size = excluded.serving_size,
         serving_unit = excluded.serving_unit,
         grams_per_serving = excluded.grams_per_serving,
+        package_size = excluded.package_size,
+        package_size_value = excluded.package_size_value,
+        package_unit = excluded.package_unit,
         calories = excluded.calories,
         protein_g = excluded.protein_g,
         carbs_g = excluded.carbs_g,
@@ -1556,6 +2123,7 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         sugar_g = excluded.sugar_g,
         saturated_fat_g = excluded.saturated_fat_g,
         sodium_mg = excluded.sodium_mg,
+        caffeine_mg_per_100ml = excluded.caffeine_mg_per_100ml,
         caffeine_mg_per_can = excluded.caffeine_mg_per_can,
         kj_per_100 = excluded.kj_per_100,
         calories_per_100 = excluded.calories_per_100,
@@ -1578,11 +2146,19 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         food.userId ?? null,
         food.brandId ?? null,
         food.brandName ?? null,
-        food.itemType,
+        itemType,
+        itemType,
+        baseUnit,
+        nutritionBasis,
+        servingMode,
+        food.servingLabel ?? null,
         food.name,
         servingSize,
         servingUnit,
         gramsPerServing,
+        food.packageSizeLabel ?? null,
+        food.packageSize ?? null,
+        food.packageUnit ?? null,
         calories,
         proteinG,
         carbsG,
@@ -1591,6 +2167,7 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
         food.sugarG ?? null,
         food.saturatedFatG ?? null,
         food.sodiumMg ?? null,
+        food.caffeineMgPer100Ml ?? null,
         food.caffeineMgPerCan ?? null,
         food.kjPer100 ?? null,
         food.caloriesPer100 ?? null,
@@ -1618,27 +2195,64 @@ async function cacheFoodItemsInLocalDb(foods: FoodItem[]): Promise<void> {
 function mergeFoodSearchResults(localFoods: FoodItem[], remoteFoods: FoodItem[]): FoodItem[] {
   const byKey = new Map<string, FoodItem>();
 
-  for (const food of [...localFoods, ...remoteFoods]) {
+  for (const food of localFoods) {
     const key = `${food.id}:${food.barcode ?? ''}`;
-    if (!byKey.has(key)) {
-      byKey.set(key, food);
-    }
+    byKey.set(key, food);
+  }
+
+  // Prefer remote rows when the same item exists locally, so newly migrated
+  // nutrition fields (for example caffeine_mg_per_100ml) are used immediately.
+  for (const food of remoteFoods) {
+    const key = `${food.id}:${food.barcode ?? ''}`;
+    byKey.set(key, food);
   }
 
   return Array.from(byKey.values()).slice(0, 50);
 }
 
 function mapSupabaseSearchFood(row: SupabaseFoodSearchRow): FoodItem {
+  const parsedPackage = parsePackageSizeLabel(row.package_size ?? null);
+  const packageSize =
+    (Number.isFinite(row.package_size_value) && (row.package_size_value as number) > 0 ? (row.package_size_value as number) : null)
+    ?? parsedPackage.size;
+  const packageUnit = (row.package_unit === 'ml' || row.package_unit === 'g' ? row.package_unit : null) ?? parsedPackage.unit;
+  const inferredItemType = normalizeFoodItemType(row.product_type ?? row.item_type ?? 'food');
+  const baseUnit = normalizeFoodBaseUnit(row.base_unit, inferredItemType);
+  const nutritionBasis = normalizeNutritionBasis(row.nutrition_basis, baseUnit);
+  const servingMode = normalizeServingMode(row.serving_mode, packageSize, row.serving_label ?? null);
+  const defaultServingSize =
+    Number.isFinite(row.serving_size) && (row.serving_size ?? 0) > 0
+      ? (row.serving_size as number)
+      : servingMode === 'fixed_package' && Number.isFinite(packageSize) && (packageSize ?? 0) > 0
+        ? packageSize!
+        : 100;
+  const defaultServingUnit =
+    row.serving_unit?.trim()
+    || (servingMode === 'fixed_package' && packageUnit ? packageUnit : null)
+    || (baseUnit === 'ml' ? 'ml' : 'g');
+  const gramsPerServing =
+    Number.isFinite(row.grams_per_serving) && (row.grams_per_serving ?? 0) > 0
+      ? (row.grams_per_serving as number)
+      : defaultServingSize;
+
   return mapFood({
     id: row.id,
     user_id: null,
     brand_id: null,
     brand_name: row.brand_name,
-    item_type: row.item_type ?? 'food',
+    item_type: inferredItemType,
+    product_type: row.product_type ?? inferredItemType,
+    base_unit: baseUnit,
+    nutrition_basis: nutritionBasis,
+    serving_mode: servingMode,
+    serving_label: row.serving_label ?? null,
     name: row.name,
-    serving_size: row.serving_size ?? 100,
-    serving_unit: row.serving_unit ?? 'g',
-    grams_per_serving: row.grams_per_serving ?? row.serving_size ?? 100,
+    serving_size: defaultServingSize,
+    serving_unit: defaultServingUnit,
+    grams_per_serving: gramsPerServing,
+    package_size: row.package_size ?? null,
+    package_size_value: packageSize,
+    package_unit: packageUnit,
     calories: row.calories ?? 0,
     protein_g: row.protein_g ?? 0,
     carbs_g: row.carbs_g ?? 0,
@@ -1647,6 +2261,7 @@ function mapSupabaseSearchFood(row: SupabaseFoodSearchRow): FoodItem {
     sugar_g: row.sugar_g ?? null,
     saturated_fat_g: row.saturated_fat_g ?? null,
     sodium_mg: row.sodium_mg,
+    caffeine_mg_per_100ml: row.caffeine_mg_per_100ml ?? null,
     caffeine_mg_per_can: row.caffeine_mg_per_can ?? null,
     kj_per_100: row.kj_per_100 ?? null,
     calories_per_100: row.calories_per_100 ?? null,
@@ -1678,16 +2293,43 @@ function normalizeFoodSourceProvider(value: string): FoodItem['sourceProvider'] 
 }
 
 function mapFood(row: FoodRow): FoodItem {
+  const itemType = normalizeFoodItemType(row.product_type ?? row.item_type);
+  const parsedPackage = parsePackageSizeLabel(row.package_size ?? null);
+  const packageSize =
+    (Number.isFinite(row.package_size_value) && (row.package_size_value as number) > 0 ? (row.package_size_value as number) : null)
+    ?? parsedPackage.size;
+  const packageUnit = (row.package_unit === 'ml' || row.package_unit === 'g' ? row.package_unit : null) ?? parsedPackage.unit;
+  const baseUnit = normalizeFoodBaseUnit(row.base_unit, itemType);
+  const nutritionBasis = normalizeNutritionBasis(row.nutrition_basis, baseUnit);
+  const servingMode = normalizeServingMode(row.serving_mode, packageSize, row.serving_label);
+  const servingSize =
+    Number.isFinite(row.serving_size) && row.serving_size > 0
+      ? row.serving_size
+      : servingMode === 'fixed_package' && Number.isFinite(packageSize) && (packageSize ?? 0) > 0
+        ? packageSize!
+        : 100;
+  const servingUnit = row.serving_unit?.trim() || (servingMode === 'fixed_package' && packageUnit ? packageUnit : baseUnit);
+  const gramsPerServing =
+    Number.isFinite(row.grams_per_serving) && row.grams_per_serving > 0 ? row.grams_per_serving : servingSize;
+
   return {
     id: row.id,
     userId: row.user_id,
     brandId: row.brand_id,
     brandName: row.brand_name,
-    itemType: normalizeFoodItemType(row.item_type),
+    itemType,
+    productType: itemType,
+    baseUnit,
+    nutritionBasis,
+    servingMode,
+    servingLabel: row.serving_label,
     name: row.name,
-    servingSize: row.serving_size,
-    servingUnit: row.serving_unit,
-    gramsPerServing: row.grams_per_serving,
+    servingSize,
+    servingUnit,
+    gramsPerServing,
+    packageSize: packageSize,
+    packageUnit: packageUnit,
+    packageSizeLabel: row.package_size,
     calories: row.calories,
     proteinG: row.protein_g,
     carbsG: row.carbs_g,
@@ -1696,6 +2338,7 @@ function mapFood(row: FoodRow): FoodItem {
     sugarG: row.sugar_g,
     saturatedFatG: row.saturated_fat_g,
     sodiumMg: row.sodium_mg,
+    caffeineMgPer100Ml: row.caffeine_mg_per_100ml,
     caffeineMgPerCan: row.caffeine_mg_per_can,
     kjPer100: row.kj_per_100,
     caloriesPer100: row.calories_per_100,

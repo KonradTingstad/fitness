@@ -185,6 +185,60 @@ function parseMgInput(value: string): number | null {
   return parsed;
 }
 
+function toMilliliters(value: number, unitRaw: string | null | undefined): number | null {
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const unit = String(unitRaw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!unit.length) {
+    return null;
+  }
+  if (unit === 'ml' || unit === 'milliliter' || unit === 'milliliters') {
+    return value;
+  }
+  if (unit === 'l' || unit === 'liter' || unit === 'litre' || unit === 'liters' || unit === 'litres') {
+    return value * 1000;
+  }
+  if (unit === 'cl' || unit === 'centiliter' || unit === 'centilitre') {
+    return value * 10;
+  }
+  if (unit === 'dl' || unit === 'deciliter' || unit === 'decilitre') {
+    return value * 100;
+  }
+  return null;
+}
+
+function resolveDrinkAmountMl(food: FoodItem): number | null {
+  const servingSize = Number.isFinite(food.servingSize) && food.servingSize > 0 ? food.servingSize : 0;
+  if (servingSize > 0) {
+    const explicitMl = toMilliliters(servingSize, food.servingUnit);
+    if (Number.isFinite(explicitMl) && (explicitMl ?? 0) > 0) {
+      return explicitMl!;
+    }
+
+    const servingUnit = String(food.servingUnit ?? '').trim().toLowerCase();
+    if (servingUnit === 'g' || servingUnit === 'gram' || servingUnit === 'grams') {
+      return servingSize;
+    }
+  }
+
+  const packageAmountMl =
+    food.servingMode === 'fixed_package'
+    && Number.isFinite(food.packageSize)
+    && (food.packageSize ?? 0) > 0
+    && food.packageUnit === 'ml'
+      ? food.packageSize ?? null
+      : null;
+  if (Number.isFinite(packageAmountMl) && (packageAmountMl ?? 0) > 0) {
+    return packageAmountMl!;
+  }
+
+  const gramsPerServing = Number.isFinite(food.gramsPerServing) && food.gramsPerServing > 0 ? food.gramsPerServing : 0;
+  return gramsPerServing > 0 ? gramsPerServing : null;
+}
+
 export function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -206,18 +260,21 @@ export function HomeScreen() {
   );
   const [customDrinkName, setCustomDrinkName] = useState('');
   const [customCaffeineMg, setCustomCaffeineMg] = useState('200');
-  const effectiveDrinkSearchQuery = drinkSearchQuery.trim().length ? drinkSearchQuery : '__home_drink_search__';
-  const drinkSearch = useFoodSearch(effectiveDrinkSearchQuery, 'drink');
+  const drinkSearch = useFoodSearch(drinkSearchQuery, 'drink', {
+    enabled: caffeineSheetVisible && drinkSearchQuery.trim().length > 0,
+  });
   const scrollViewRef = useRef<ElementRef<typeof Animated.ScrollView>>(null);
   const scrollY = useSharedValue(0);
 
   useFocusEffect(
     useCallback(() => {
+      const localDate = toLocalDateKey();
+      queryClient.invalidateQueries({ queryKey: queryKeys.caffeineToday(localDate) });
       return () => {
         scrollViewRef.current?.scrollTo({ y: 0, animated: false });
         scrollY.value = 0;
       };
-    }, [scrollY]),
+    }, [queryClient, scrollY]),
   );
 
   const startWorkout = useMutation({
@@ -234,7 +291,7 @@ export function HomeScreen() {
     mutationFn: async (
       input:
         | { type: 'manual'; drinkName: string; caffeineMg: number }
-        | { type: 'database'; food: FoodItem },
+        | { type: 'database'; food: FoodItem; amountMl: number },
     ) => {
       if (input.type === 'manual') {
         return logManualCaffeineDrink({
@@ -245,11 +302,16 @@ export function HomeScreen() {
         });
       }
 
+      const gramsPerServing = Number.isFinite(input.food.gramsPerServing) && input.food.gramsPerServing > 0 ? input.food.gramsPerServing : 100;
+      const servings = input.amountMl / gramsPerServing;
+
       return addDiaryEntry({
         localDate: todayLocalDate,
         mealSlot: 'snacks',
         foodItemId: input.food.id,
-        servings: 1,
+        servings,
+        quantityType: 'gram',
+        totalGrams: input.amountMl,
         food: input.food,
       });
     },
@@ -432,12 +494,19 @@ export function HomeScreen() {
   };
 
   const handleAddDatabaseDrink = (food: FoodItem) => {
-    const caffeine = Number.isFinite(food.caffeineMgPerCan) ? Math.max(0, food.caffeineMgPerCan ?? 0) : 0;
+    const caffeinePer100Ml = Number.isFinite(food.caffeineMgPer100Ml) ? Math.max(0, food.caffeineMgPer100Ml ?? 0) : 0;
+    const legacyCaffeine = Number.isFinite(food.caffeineMgPerCan) ? Math.max(0, food.caffeineMgPerCan ?? 0) : 0;
+    const caffeine = caffeinePer100Ml > 0 ? caffeinePer100Ml : legacyCaffeine;
     if (caffeine <= 0) {
       Alert.alert('Missing caffeine', 'This drink has no caffeine value in the database. Use Custom instead.');
       return;
     }
-    addCaffeine.mutate({ type: 'database', food });
+    const amountMl = resolveDrinkAmountMl(food);
+    if (!Number.isFinite(amountMl) || (amountMl ?? 0) <= 0) {
+      Alert.alert('Missing volume', 'This drink has caffeine but no usable volume in ml. Add it via Custom instead.');
+      return;
+    }
+    addCaffeine.mutate({ type: 'database', food, amountMl: amountMl! });
   };
 
   const drinkResults = drinkSearchQuery.trim().length >= 1 ? drinkSearch.data ?? [] : [];
@@ -912,8 +981,27 @@ export function HomeScreen() {
                     ) : drinkResults.length ? (
                       <View style={styles.caffeineSearchResults}>
                         {drinkResults.slice(0, 6).map((food) => {
-                          const caffeine = Number.isFinite(food.caffeineMgPerCan) ? Math.round(Math.max(0, food.caffeineMgPerCan ?? 0)) : 0;
-                          const canAdd = caffeine > 0;
+                          const caffeinePer100Ml = Number.isFinite(food.caffeineMgPer100Ml)
+                            ? Math.round(Math.max(0, food.caffeineMgPer100Ml ?? 0))
+                            : 0;
+                          const legacyCaffeine = Number.isFinite(food.caffeineMgPerCan)
+                            ? Math.round(Math.max(0, food.caffeineMgPerCan ?? 0))
+                            : 0;
+                          const canAdd = caffeinePer100Ml > 0 || legacyCaffeine > 0;
+                          const caffeineLabel = caffeinePer100Ml > 0
+                            ? `${caffeinePer100Ml} mg / 100 ml`
+                            : legacyCaffeine > 0
+                              ? `${legacyCaffeine} mg (legacy)`
+                              : 'No caffeine value';
+                          const servingVolumeLabel =
+                            Number.isFinite(food.servingSize) && food.servingSize > 0
+                              ? `${Math.round(food.servingSize)} ${food.servingUnit}`
+                              : Number.isFinite(food.packageSize) && (food.packageSize ?? 0) > 0 && food.packageUnit
+                                ? `${Math.round(food.packageSize ?? 0)} ${food.packageUnit}`
+                                : null;
+                          const servingLabel = food.servingMode === 'fixed_package'
+                            ? `${food.servingLabel ?? '1 serving'}${servingVolumeLabel ? ` • ${servingVolumeLabel}` : ''}`
+                            : servingVolumeLabel;
                           return (
                             <View
                               key={food.id}
@@ -923,8 +1011,13 @@ export function HomeScreen() {
                                 <AppText weight="800" numberOfLines={1}>{food.name}</AppText>
                                 <AppText muted variant="small" numberOfLines={1}>
                                   {food.brandName ? `${food.brandName} • ` : ''}
-                                  {canAdd ? `${caffeine} mg caffeine` : 'No caffeine value'}
+                                  {caffeineLabel}
                                 </AppText>
+                                {servingLabel ? (
+                                  <AppText muted variant="small" numberOfLines={1}>
+                                    {servingLabel}
+                                  </AppText>
+                                ) : null}
                               </View>
                               <Pressable
                                 onPress={() => handleAddDatabaseDrink(food)}
